@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#FBF5EB">
+<meta name="description" content="CakeCart: pick your cakes, get your shopping list and total.">
+<title>CakeCart</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="icons/favicon.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="app">
+
+  <!-- CAKES -->
+  <section class="screen on" id="cakes">
+    <header class="brand">
+      <img src="icons/logo.png" alt="" class="logo">
+      <span class="wordmark">CakeCart</span>
+    </header>
+    <div class="hello">
+      <h1>Hi there!</h1>
+      <p>What would you like to bake?</p>
+    </div>
+    <label class="search">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="q" type="search" placeholder="Search cheesecakes, brownies…" autocomplete="off">
+    </label>
+    <div class="chips" id="cats"></div>
+    <div id="cakeList" class="cakelist"></div>
+    <div class="spacer"></div>
+    <div class="cta" id="cta">
+      <button class="primary" id="make"><span id="ctaText">Make shopping list</span><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+    </div>
+  </section>
+
+  <!-- SHOPPING LIST -->
+  <section class="screen" id="list">
+    <header class="bar">
+      <button class="icon" data-go="cakes" aria-label="Back"><svg viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></svg></button>
+      <div class="bartitle"><h2>Shopping List</h2><p>Combined ingredients for your selected recipes</p></div>
+      <button class="icon" id="uncheck" aria-label="Uncheck all"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 3-6.2M4 4v4h4"/></svg></button>
+    </header>
+    <div id="listBody"></div>
+    <div class="spacer"></div>
+    <div class="totalbar" id="totalbar"><span>Estimated Total</span><strong id="total">$0.00</strong></div>
+  </section>
+
+  <!-- PANTRY -->
+  <section class="screen" id="pantry">
+    <header class="bar">
+      <span class="icon ghost"></span>
+      <div class="bartitle"><h2>Pantry</h2><p>Mark what you already have at home</p></div>
+      <span class="icon ghost"></span>
+    </header>
+    <div class="note card">Anything you mark here is left out of your shopping total, on every order, until you turn it off.</div>
+    <label class="search">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="pq" type="search" placeholder="Search ingredients…" autocomplete="off">
+    </label>
+    <div class="card" id="pantryList"></div>
+    <div class="spacer"></div>
+  </section>
+
+  <nav class="tabbar">
+    <button data-go="cakes" class="on"><svg viewBox="0 0 24 24"><path d="M3 4h2l2.4 11h10.2L20 8H7"/><circle cx="9" cy="19.5" r="1.5"/><circle cx="17" cy="19.5" r="1.5"/></svg><span>Cakes</span></button>
+    <button data-go="list"><svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 8h8M8 12h8M8 16h5"/></svg><span>Shopping List</span><i class="dot" id="listBadge"></i></button>
+    <button data-go="pantry"><svg viewBox="0 0 24 24"><path d="M4 9l8-5 8 5v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M9 21v-6h6v6"/></svg><span>Pantry</span></button>
+  </nav>
+</div>
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
