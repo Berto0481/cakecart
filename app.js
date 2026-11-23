@@ -159,7 +159,7 @@ function renderList(){
       <div class="stat"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M15 9.5c-.5-1-1.6-1.5-3-1.5-1.7 0-3 .8-3 2s1.3 1.7 3 2 3 .8 3 2-1.3 2-3 2c-1.4 0-2.5-.5-3-1.5M12 6v2M12 16v2"/></svg><div><b>~$${Math.round(bill)}</b><small>Est. total</small></div></div>
     </div>
     <div class="order"><b>Order:</b> ${Object.entries(qty).map(([n,k]) => `${k} × ${esc(short(n))}`).join(" · ")}</div>
-    <div class="card progress"><div class="row"><span>In the cart: <b>${inCart}</b> of <b>${toBuy.length}</b></span><span>${pct}%</span></div><div class="track"><div class="fill" style="width:${pct}%"></div></div></div>
+    <div class="card progress"><div class="row"><span>In the cart: <b>${inCart}</b> of <b>${toBuy.length}</b></span><span>${inCart?`<button class="linkbtn" id="uncheck">Uncheck all</button>`:""}${pct}%</span></div><div class="track"><div class="fill" style="width:${pct}%"></div></div></div>
     <div class="seg">
       <button class="chip ${filter==="all"?"on":""}" data-f="all">All (${names.length})</button>
       <button class="chip ${filter==="buy"?"on":""}" data-f="buy">To Buy (${toBuy.length})</button>
@@ -197,6 +197,7 @@ function renderList(){
         <button class="pill ${hv?"yes":""}">${hv?"✓ Have it":"Have it"}</button>
       </div></div>`;
   }
+  const un = body.querySelector("#uncheck"); if (un) un.onclick = () => { checked = {}; save(); renderList(); };
   body.querySelectorAll(".seg .chip").forEach(c => c.onclick = () => { filter = c.dataset.f; renderList(); });
   body.querySelectorAll(".item").forEach(row => {
     const n = row.dataset.n;
@@ -234,7 +235,6 @@ function go(v){
 }
 document.querySelectorAll("[data-go]").forEach(b => b.onclick = () => go(b.dataset.go));
 $("#make").onclick = () => go("list");
-$("#uncheck").onclick = () => { checked = {}; save(); renderList(); };
 $("#q").oninput = e => { query = e.target.value; renderCakes(); };
 $("#pq").oninput = e => { pquery = e.target.value; renderPantry(); };
 

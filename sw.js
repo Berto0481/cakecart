@@ -1,6 +1,6 @@
 // CakeCart offline support: serve from cache, refresh in the background.
 // Bump VERSION whenever recipes, prices or the app change.
-const VERSION = "cakecart-v1";
+const VERSION = "cakecart-v2";
 const FILES = [
   "./", "index.html", "app.css", "app.js", "data.js", "manifest.webmanifest",
   "icons/icon-192.png", "icons/icon-512.png", "icons/maskable-192.png", "icons/maskable-512.png",
