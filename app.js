@@ -207,13 +207,14 @@ function compute(){
     if (ing?.madeFrom && db.recipes[ing.madeFrom] && depth < 4) {
       const r = db.recipes[ing.madeFrom]; const hm = homemade[r.name] = homemade[r.name] || {amt:0, unit:r.yieldUnit||ing.unit, yield:r.yield}; hm.amt += amt;
       const f = r.yield > 0 ? amt / r.yield : 0;
-      for (const s of r.sections) for (const it of s.items) add(it.ing, it.amt*f, r.name, depth+1);
+      for (const s of r.sections) for (const it of s.items) add(it.ing, it.amt*f, `${forName} (${r.name.toLowerCase()})`, depth+1);
       return;
     }
     tot[id] = (tot[id]||0) + amt; (used[id] = used[id] || new Set()).add(forName);
   }
   for (const [id, k] of Object.entries(qty)) { const r = db.recipes[id]; if (!r) continue;
-    for (const s of r.sections) for (const it of s.items) add(it.ing, it.amt*k, short(r), 0); }
+    const who = k > 1 ? `${short(r)} ×${k}` : short(r);
+    for (const s of r.sections) for (const it of s.items) add(it.ing, it.amt*k, who, 0); }
   return {tot, used, homemade};
 }
 function renderList(){
@@ -260,7 +261,8 @@ function renderList(){
       <div class="iinfo">
         <div class="iname">${esc(ingName(id))}${ing.pantry&&!hv?`<span class="tag">check pantry</span>`:""}</div>
         <div class="ineed">Need ${esc(need(id, tot[id]))}</div>
-        <div class="ibuy">${b ? `Buy ${b.packs} × ${esc(b.lab)}${b.packs>1?` · ${money(b.price)} each`:""}` : `For ${[...used[id]].map(esc).join(", ")}`}</div>
+        ${b ? `<div class="ibuy">Buy ${b.packs} × ${esc(b.lab)}${b.packs>1?` · ${money(b.price)} each`:""}</div>` : ""}
+        <div class="ifor"><svg viewBox="0 0 24 24"><path d="M4 18h16M6 18v-6l6-4 6 4v6"/></svg>For ${[...used[id]].map(esc).join(", ")}</div>
       </div>
       <div class="iright">
         ${hv ? `<span class="price na">—</span>` : b ? `<span class="price">${money(b.cost)}</span>` : `<span class="price na">no price</span>`}
