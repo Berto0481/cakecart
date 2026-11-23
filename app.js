@@ -121,7 +121,12 @@ function thumb(r){
 
 // ---------- toast + sheets ----------
 let toastT;
-function toast(msg){ const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), 2600); }
+function toast(msg, actionLabel, action){
+  const t = $("#toast"); t.innerHTML = esc(msg) + (actionLabel ? ` <button class="toastbtn">${esc(actionLabel)}</button>` : "");
+  t.classList.toggle("act", !!actionLabel); t.classList.add("show"); clearTimeout(toastT);
+  if (actionLabel) t.querySelector(".toastbtn").onclick = () => { t.classList.remove("show"); action(); };
+  toastT = setTimeout(() => t.classList.remove("show"), actionLabel ? 5000 : 2600);
+}
 const sheetStack = [];
 function openSheet(title, bodyHtml, mount, opts = {}){
   const el = document.createElement("div");
@@ -184,6 +189,13 @@ function updateChrome(){
   $("#cta").classList.toggle("hide", !t);
   $("#ctaText").textContent = t ? `Make shopping list · ${t} selected` : "Make shopping list";
   const b = $("#listBadge"); b.textContent = t; b.classList.toggle("show", !!t);
+  $("#clearCakes").classList.toggle("idle", !t);
+}
+function clearCakes(){
+  const t = totalCakes(); if (!t) return;
+  const prevQty = {...qty}, prevChecked = {...checked};
+  qty = {}; checked = {}; saveState(); if (cat === "Selected") { cat = "All"; renderCats(); } renderCakes(); updateChrome();
+  toast(`Cleared ${t} cake${t>1?"s":""}`, "Undo", () => { qty = prevQty; checked = prevChecked; saveState(); renderCakes(); updateChrome(); });
 }
 
 // ---------- SHOPPING LIST ----------
@@ -594,6 +606,7 @@ $("#iq").oninput = e => { iquery = e.target.value; renderIngredients(); };
 $("#newRecipe").onclick = () => editRecipeDetails(null);
 $("#newIng").onclick = () => editIngredient(null);
 $("#openSettings").onclick = openSettings;
+$("#clearCakes").onclick = clearCakes;
 document.addEventListener("keydown", e => { if (e.key === "Escape" && sheetStack.length) sheetStack[sheetStack.length-1].querySelector(".close").click(); });
 
 refreshAll();

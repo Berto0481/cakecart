@@ -147,7 +147,8 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
 .icon.idle{opacity:.3}
 
 /* ---------- v2: recipes, ingredients, sheets ---------- */
-.brand .gear{margin-left:auto;color:var(--muted)}
+.brand .reset{margin-left:auto;color:var(--muted)}
+.brand .gear{color:var(--muted)}
 .icon.add{background:var(--grad);color:#fff;box-shadow:0 4px 14px rgba(200,50,79,.3)}
 .icon.add svg{stroke-width:2.6}
 button.cake{width:100%;text-align:left;font:inherit;color:inherit}
@@ -230,3 +231,6 @@ button.cake{width:100%;text-align:left;font:inherit;color:inherit}
 .toast{position:fixed;left:50%;bottom:calc(92px + var(--safe-b));transform:translate(-50%,20px);background:var(--ink);color:#fff;padding:11px 18px;border-radius:14px;font-weight:700;font-size:14.5px;opacity:0;pointer-events:none;transition:.25s;z-index:40;max-width:calc(100% - 40px);text-align:center}
 .toast.show{opacity:1;transform:translate(-50%,0)}
 .tabbar button span{white-space:nowrap}
+.toast.act{pointer-events:auto;display:flex;align-items:center;gap:14px}
+.toastbtn{border:0;background:none;color:#FF9FB2;font-weight:800;font-size:14.5px;padding:2px 4px}
+.toast.act{white-space:nowrap}
