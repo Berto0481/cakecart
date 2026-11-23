@@ -147,8 +147,10 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
 .icon.idle{opacity:.3}
 
 /* ---------- v2: recipes, ingredients, sheets ---------- */
-.brand .reset{margin-left:auto;color:var(--muted)}
-.brand .gear{color:var(--muted)}
+.brand .gear{margin-left:auto;color:var(--muted)}
+.hirow{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:18px}
+.hirow h1{margin:0!important}
+.hirow .reset{color:var(--muted)}
 .icon.add{background:var(--grad);color:#fff;box-shadow:0 4px 14px rgba(200,50,79,.3)}
 .icon.add svg{stroke-width:2.6}
 button.cake{width:100%;text-align:left;font:inherit;color:inherit}
