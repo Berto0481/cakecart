@@ -26,6 +26,17 @@ function mergeDefaults(){
     const mine = db.recipes[id];
     if (mine && r.steps && !mine.steps) { mine.steps = clone(r.steps); if (r.source && !mine.source) mine.source = r.source; added++; }
   }
+  // v4: the original brownie recipe uses a 9×9 pan (about 16 brownies), not 9×13 / 24.
+  // Only switch it if it's still on the old built-in setting, so your own changes are kept.
+  const br = db.recipes["Cheesecake Brownies"];
+  if ((db.version || 0) < 4 && br) {
+    if (br.size === "9×13 pan") { br.size = "9×9 pan"; added++; }
+    if (+br.pieces === 24) { br.pieces = 16; added++; }
+  }
+  if (br) {
+    const s0 = br.steps && br.steps[0], OLD = "Heat the oven to 350°F (175°C). Line the pan with parchment, leaving some hanging over two sides. (The original recipe uses a 9×9\" pan.)";
+    if (s0 && s0.t === OLD) { s0.t = DEFAULTS.recipes["Cheesecake Brownies"].steps[0].t; added++; }
+  }
   if (added || db.version !== DEFAULTS.version) { db.version = DEFAULTS.version; store.set("db", db); }
 }
 
@@ -439,7 +450,7 @@ function editRecipeDetails(id, done){
         ? `<div class="two"><label class="field"><span>One batch makes</span><input id="d_yield" inputmode="decimal" value="${r2(v.yield||236)}"></label>
            <label class="field"><span>Unit</span><select id="d_yu">${["ml","g","each"].map(u=>`<option ${(v.yieldUnit||"ml")===u?"selected":""}>${u}</option>`).join("")}</select></label></div>
            <p class="small" style="margin:0 0 12px">It becomes an ingredient you can add to other recipes, priced from this recipe.</p>`
-        : `<div class="two"><label class="field"><span>Sold as</span><input id="d_size" value="${esc(v.size || (pan?"9×13 pan":"9\" cheesecake"))}"></label>
+        : `<div class="two"><label class="field"><span>Sold as</span><input id="d_size" value="${esc(v.size || (pan?"9×9 pan":"9\" cheesecake"))}"></label>
            <label class="field"><span>Cut into</span><input id="d_piece" value="${esc(v.piece || (pan?"brownie":"slice"))}"></label></div>`;
     };
     b.querySelector("#d_cat").onchange = more; more();
@@ -447,7 +458,7 @@ function editRecipeDetails(id, done){
       const name = b.querySelector("#d_name").value.trim(); if (!name) { toast("Give it a name"); return; }
       const type = b.querySelector("#d_cat").value, sub = type === "Homemade ingredient";
       const rid = id || newId("r");
-      const rec = r || {sections:[{title:"Ingredients", items:[]}], markup:3, packaging:0, pieces: type==="Brownies"?24:12,
+      const rec = r || {sections:[{title:"Ingredients", items:[]}], markup:3, packaging:0, pieces: type==="Brownies"?16:12,
         look: LOOKS[Object.keys(db.recipes).length % LOOKS.length]};
       rec.name = name; rec.desc = b.querySelector("#d_desc").value.trim();
       if (sub) {

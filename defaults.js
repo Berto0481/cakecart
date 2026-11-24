@@ -1,6 +1,6 @@
 // CakeCart built-in data (from the original spreadsheet). Your own edits are saved on your device.
 const DEFAULTS = {
- "version": 3,
+ "version": 4,
  "ingredients": {
   "Graham cracker crumbs": {
    "name": "Graham crackers",
@@ -879,15 +879,15 @@ const DEFAULTS = {
     }
    ],
    "per": "pan",
-   "size": "9×13 pan",
-   "pieces": 24,
+   "size": "9×9 pan",
+   "pieces": 16,
    "piece": "brownie",
    "markup": 3,
    "packaging": 0,
    "source": "https://sugarspunrun.com/cheesecake-brownies/",
    "steps": [
     {
-     "t": "Heat the oven to 350°F (175°C). Line the pan with parchment, leaving some hanging over two sides. (The original recipe uses a 9×9\" pan.)"
+     "t": "Heat the oven to 350°F (175°C). Line a 9×9\" pan with parchment, leaving some hanging over two sides."
     },
     {
      "t": "Melt the chopped chocolate and butter together in the microwave in short bursts (about 25 seconds), stirring until smooth."
