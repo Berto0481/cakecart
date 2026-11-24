@@ -10,9 +10,9 @@ const clone = o => JSON.parse(JSON.stringify(o));
 let db = store.get("db", null);
 if (!db || !db.recipes || !db.ingredients) db = clone(DEFAULTS);
 mergeDefaults();
-let qty = store.get("qty", {}), checked = store.get("checked", {}), have = store.get("have", {});
+let qty = store.get("qty", {}), checked = store.get("checked", {}), have = store.get("have", {}), some = store.get("some", {});
 const saveDb = () => { db.savedAt = Date.now(); if (!store.set("db", db)) toast("Couldn’t save on this device. Make a backup in Settings."); };
-const saveState = () => { store.set("qty", qty); store.set("checked", checked); store.set("have", have); };
+const saveState = () => { store.set("qty", qty); store.set("checked", checked); store.set("have", have); store.set("some", some); };
 
 // Add any built-in recipes or ingredients that are new in an app update, without touching your edits.
 function mergeDefaults(){
@@ -187,7 +187,7 @@ function renderCakes(){
     row.querySelector(".plus").onclick = () => setQty(id, (qty[id]||0)+1);
     row.querySelector(".minus").onclick = () => setQty(id, (qty[id]||0)-1); });
 }
-function setQty(id, k){ if (k > 0) qty[id] = k; else delete qty[id]; checked = {}; saveState(); renderCakes(); updateChrome(); }
+function setQty(id, k){ if (k > 0) qty[id] = k; else delete qty[id]; checked = {}; some = {}; saveState(); renderCakes(); updateChrome(); }
 function cleanQty(){ for (const id of Object.keys(qty)) if (!db.recipes[id] || db.recipes[id].sub) delete qty[id]; }
 const totalCakes = () => Object.values(qty).reduce((a,b)=>a+b,0);
 function updateChrome(){
@@ -199,9 +199,9 @@ function updateChrome(){
 }
 function clearCakes(){
   const t = totalCakes(); if (!t) return;
-  const prevQty = {...qty}, prevChecked = {...checked};
-  qty = {}; checked = {}; saveState(); if (cat === "Selected") { cat = "All"; renderCats(); } renderCakes(); updateChrome();
-  toast(`Cleared ${t} cake${t>1?"s":""}`, "Undo", () => { qty = prevQty; checked = prevChecked; saveState(); renderCakes(); updateChrome(); });
+  const prevQty = {...qty}, prevChecked = {...checked}, prevSome = {...some};
+  qty = {}; checked = {}; some = {}; saveState(); if (cat === "Selected") { cat = "All"; renderCats(); } renderCakes(); updateChrome();
+  toast(`Cleared ${t} cake${t>1?"s":""}`, "Undo", () => { qty = prevQty; checked = prevChecked; some = prevSome; saveState(); renderCakes(); updateChrome(); });
 }
 
 // ---------- SHOPPING LIST ----------
@@ -231,9 +231,12 @@ function renderList(){
   }
   $("#totalbar").style.display = "";
   const {tot, used, homemade} = compute(), ids = Object.keys(tot);
-  const toBuy = ids.filter(id => !have[id]), haveL = ids.filter(id => have[id]);
+  const rem = id => Math.max(0, tot[id] - (some[id] || 0));
+  const covered = id => some[id] > 0 && rem(id) <= tot[id] * 0.005;
+  const isHave = id => !!have[id] || covered(id);
+  const toBuy = ids.filter(id => !isHave(id)), haveL = ids.filter(isHave);
   let bill = 0; const unpriced = [];
-  toBuy.forEach(id => { const b = buy(id, tot[id]); if (b) bill += b.cost; else unpriced.push(ingName(id)); });
+  toBuy.forEach(id => { const b = buy(id, rem(id)); if (b) bill += b.cost; else unpriced.push(ingName(id)); });
   const inCart = toBuy.filter(id => checked[id]).length, pct = toBuy.length ? Math.round(inCart/toBuy.length*100) : 100;
   let h = `<div class="card stats">
       <div class="stat"><svg viewBox="0 0 24 24"><path d="M3 17h18M5 17V9l7-4 7 4v8"/><path d="M9 13h6"/></svg><div><b>${t}</b><small>${t>1?"Cakes":"Cake"}</small></div></div>
@@ -247,7 +250,7 @@ function renderList(){
       <button class="chip ${filter==="buy"?"on":""}" data-f="buy">To Buy (${toBuy.length})</button>
       <button class="chip ${filter==="have"?"on":""}" data-f="have">Have It (${haveL.length})</button>
     </div>`;
-  const show = id => filter==="all" || (filter==="buy" ? !have[id] : have[id]);
+  const show = id => filter==="all" || (filter==="buy" ? !isHave(id) : isHave(id));
   let any = false;
   for (const a of AISLES) {
     const vis = ids.filter(id => (AISLES.includes(ING(id)?.aisle) ? ING(id).aisle : "Other") === a && show(id)).sort((x,y) => ingName(x).localeCompare(ingName(y)));
@@ -257,29 +260,63 @@ function renderList(){
   if (!any) h += `<div class="card empty">${filter==="have"?"Nothing marked as “Have it” yet.":"Everything’s marked as already at home."}</div>`;
   for (const [n, hm] of Object.entries(homemade)) h += `<p class="small">Includes the ingredients for ${Math.round(hm.amt)} ${esc(hm.unit)} of homemade ${esc(n.toLowerCase())}${hm.yield>0?` (≈ ${r1(hm.amt/hm.yield)} batches)`:""}.</p>`;
   if (unpriced.length) h += `<p class="small">No price yet for: ${unpriced.map(esc).join(", ")}. Add prices in Ingredients to include them.</p>`;
-  h += `<p class="small">Totals use your saved prices for the whole packages you buy, before tax. Tap “Have it” on anything already at home to take it off the total.</p>`;
+  h += `<p class="small">Totals use your saved prices for the whole packages you buy, before tax. Tap “Have it” on anything already at home, or “Have some” to say how much you have, and the total updates. “Have some” amounts are just for this trip.</p>`;
   body.innerHTML = h; $("#total").textContent = money(bill); $("#uncheck").classList.toggle("idle", !inCart);
 
   function item(id){
-    const b = buy(id, tot[id]), hv = !!have[id], dn = !!checked[id] && !hv, ing = ING(id) || {};
+    const hv = isHave(id), part = some[id] > 0 && !have[id], b = buy(id, rem(id)), dn = !!checked[id] && !hv, ing = ING(id) || {};
     return `<div class="item ${dn?"done":""} ${hv?"have":""}" data-id="${esc(id)}">
       <button class="box" aria-label="In the cart" style="${hv?"visibility:hidden":""}"><svg viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg></button>
       <div class="iinfo">
         <div class="iname">${esc(ingName(id))}${ing.pantry&&!hv?`<span class="tag">check pantry</span>`:""}</div>
         <div class="ineed">Need ${esc(need(id, tot[id]))}</div>
-        ${b ? `<div class="ibuy">Buy ${b.packs} × ${esc(b.lab)}${b.packs>1?` · ${money(b.price)} each`:""}</div>` : ""}
+        ${part ? `<div class="ihave">You have ${esc(need(id, some[id]))}${covered(id) ? " · that’s enough" : ` · still need ${esc(need(id, rem(id)))}`}</div>` : ""}
+        ${b && !hv ? `<div class="ibuy">Buy ${b.packs} × ${esc(b.lab)}${b.packs>1?` · ${money(b.price)} each`:""}</div>` : ""}
         <div class="ifor"><svg viewBox="0 0 24 24"><path d="M4 18h16M6 18v-6l6-4 6 4v6"/></svg>For ${[...used[id]].map(esc).join(", ")}</div>
       </div>
       <div class="iright">
         ${hv ? `<span class="price na">—</span>` : b ? `<span class="price">${money(b.cost)}</span>` : `<span class="price na">no price</span>`}
-        <button class="pill ${hv?"yes":""}">${hv?"✓ Have it":"Have it"}</button>
+        ${part ? "" : `<button class="pill ${have[id]?"yes":""}">${have[id]?"✓ Have it":"Have it"}</button>`}
+        ${have[id] ? "" : `<button class="pill some ${part?"yes":""}">${part?"✓ Have some":"Have some"}</button>`}
       </div></div>`;
   }
   body.querySelectorAll(".seg .chip").forEach(c => c.onclick = () => { filter = c.dataset.f; renderList(); });
   body.querySelectorAll(".item").forEach(row => { const id = row.dataset.id;
     const tog = () => { if (have[id]) return; if (checked[id]) delete checked[id]; else checked[id] = true; saveState(); renderList(); };
     row.querySelector(".box").onclick = tog; row.querySelector(".iinfo").onclick = tog;
-    row.querySelector(".pill").onclick = () => { if (have[id]) delete have[id]; else { have[id] = true; delete checked[id]; } saveState(); renderList(); };
+    const hp = row.querySelector(".pill:not(.some)");
+    if (hp) hp.onclick = () => { if (have[id]) delete have[id]; else { have[id] = true; delete checked[id]; delete some[id]; } saveState(); renderList(); };
+    const sp = row.querySelector(".pill.some");
+    if (sp) sp.onclick = () => haveSome(id, tot[id]);
+  });
+}
+// "Have some": how much of this ingredient is at home right now (just for this shopping trip)
+function haveSome(id, needed){
+  const ing = ING(id) || {}, p = ing.pkg;
+  const opts = [];
+  if (id === "Cream cheese (brick)") opts.push(["bricks (8 oz)", 226.8]);
+  if (id === "Butter") opts.push(["sticks", 113.4]);
+  if (id === "Eggs (large)") opts.push(["eggs", 1]);
+  if (id === "Oreo cookies") opts.push(["cookies", 1]);
+  if (p && p.size > 0) opts.push([`× ${p.label || "package"}`, p.size]);
+  for (const [u, f] of Object.entries(unitsFor(id))) if (!opts.some(o => o[1] === f && o[0].startsWith(u))) opts.push([u, f]);
+  const cur = some[id] || 0, first = opts[0];
+  const startVal = cur ? r2(cur / first[1]) : "";
+  openSheet("Have some", `
+    <p class="small" style="margin:0 0 12px"><b style="color:var(--ink);font-size:16px">${esc(ingName(id))}</b><br>This trip needs ${esc(need(id, needed))}.</p>
+    <div class="two"><label class="field"><span>How much do you have?</span><input id="s_amt" inputmode="decimal" value="${startVal}" placeholder="0"></label>
+      <label class="field"><span>Unit</span><select id="s_unit">${opts.map(([l], i) => `<option value="${i}">${esc(l)}</option>`).join("")}</select></label></div>
+    <p class="small" id="s_res" style="margin:0 0 12px"></p>
+    <button class="primary" id="s_save">Save</button>
+    ${cur ? `<div class="btnrow"><button class="ghostbtn" id="s_clear">Clear, I have none</button></div>` : ""}`, (b, close) => {
+    const amt = b.querySelector("#s_amt"), un = b.querySelector("#s_unit"), res = b.querySelector("#s_res");
+    const val = () => num(amt.value) * opts[+un.value][1];
+    const show = () => { const v = val(), left = Math.max(0, needed - v), bb = buy(id, left);
+      res.textContent = !v ? "" : left <= needed*0.005 ? "That covers it, so nothing to buy." :
+        `Still need ${need(id, left)}${bb ? ` → buy ${bb.packs} × ${bb.lab} (${money(bb.cost)})` : ""}.`; };
+    amt.oninput = show; un.onchange = show; show(); setTimeout(() => amt.focus(), 250);
+    b.querySelector("#s_save").onclick = () => { const v = val(); if (v > 0) { some[id] = v; delete checked[id]; } else delete some[id]; saveState(); close(); renderList(); };
+    const c = b.querySelector("#s_clear"); if (c) c.onclick = () => { delete some[id]; saveState(); close(); renderList(); };
   });
 }
 
@@ -472,12 +509,13 @@ let iquery = "", ifilter = "all";
 function renderIngFilters(){
   const ids = Object.keys(db.ingredients).filter(k => !db.ingredients[k].madeFrom);
   const nHave = ids.filter(k => have[k]).length, nNo = ids.filter(k => unitCost(k) == null).length;
-  const f = [["all",`All (${ids.length})`],["have",`Have at home (${nHave})`],["noprice",`No price (${nNo})`]];
+  const f = [["all",`All (${ids.length})`],["have",`At home (${nHave})`],["noprice",`No price (${nNo})`]];
   $("#ingFilters").innerHTML = f.map(([k,l]) => `<button class="chip ${ifilter===k?"on":""}" data-f="${k}">${l}</button>`).join("");
   $("#ingFilters").querySelectorAll(".chip").forEach(c => c.onclick = () => { ifilter = c.dataset.f; renderIngredients(); });
 }
 function renderIngredients(){
   renderIngFilters();
+  $("#clearHave").classList.toggle("idle", !Object.keys(have).length);
   const q = iquery.trim().toLowerCase();
   const ids = Object.keys(db.ingredients).filter(k => { const i = db.ingredients[k]; if (i.madeFrom) return false;
     if (ifilter==="have" && !have[k]) return false; if (ifilter==="noprice" && unitCost(k) != null) return false;
@@ -551,6 +589,131 @@ function editIngredient(id, onCreate){
   });
 }
 
+
+// ---------- ORDERS ----------
+let ofilter = "upcoming", omonth = (() => { const d = new Date(); return [d.getFullYear(), d.getMonth()]; })();
+const ORDERS = () => (db.orders = db.orders || []);
+const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; };
+const parseDay = s => { const [y,m,d] = (s||"").split("-").map(Number); return y ? new Date(y, m-1, d) : null; };
+const fmtDay = s => { const d = parseDay(s); return d ? d.toLocaleDateString(undefined, {weekday:"short", month:"short", day:"numeric"}) : "No date"; };
+const orderTotal = o => o.items.reduce((a, it) => a + num(it.price) * num(it.qty), 0);
+const orderCost = o => o.items.reduce((a, it) => a + num(it.cost) * num(it.qty), 0);
+const orderLine = o => o.items.map(it => `${it.qty} × ${(db.recipes[it.recipe]?.name || it.name || "Cake").replace(/ Cheesecake$/,"")}`).join(" · ");
+function daysUntil(s){ const d = parseDay(s); if (!d) return null; const t = parseDay(todayStr()); return Math.round((d - t) / 86400000); }
+function dueLabel(o){
+  if (o.done) return `<span class="badge done">Delivered</span>`;
+  const n = daysUntil(o.due); if (n == null) return "";
+  if (n < 0) return `<span class="badge late">${-n} day${n<-1?"s":""} late</span>`;
+  if (n === 0) return `<span class="badge soon">Today</span>`;
+  if (n === 1) return `<span class="badge soon">Tomorrow</span>`;
+  return n <= 7 ? `<span class="badge">In ${n} days</span>` : "";
+}
+function renderOrders(){
+  const all = ORDERS(), [y, m] = omonth;
+  const inMonth = all.filter(o => { const d = parseDay(o.due); return d && d.getFullYear() === y && d.getMonth() === m; });
+  const sales = inMonth.reduce((a,o) => a + orderTotal(o), 0), cost = inMonth.reduce((a,o) => a + orderCost(o), 0);
+  const paid = inMonth.filter(o => o.paid).reduce((a,o) => a + orderTotal(o), 0);
+  const cakes = inMonth.reduce((a,o) => a + o.items.reduce((b,it) => b + num(it.qty), 0), 0);
+  const monthName = new Date(y, m, 1).toLocaleDateString(undefined, {month:"long", year:"numeric"});
+  const upcoming = all.filter(o => !o.done).sort((a,b) => (a.due||"9").localeCompare(b.due||"9"));
+  const list = ofilter === "upcoming" ? upcoming : ofilter === "done" ? all.filter(o => o.done).sort((a,b) => (b.due||"").localeCompare(a.due||"")) : [...all].sort((a,b) => (b.due||"").localeCompare(a.due||""));
+  let h = `<div class="card month">
+      <div class="mhead"><button class="icon" id="mPrev" aria-label="Previous month"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button><b>${esc(monthName)}</b><button class="icon" id="mNext" aria-label="Next month"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button></div>
+      <div class="mgrid">
+        <div><small>Sales</small><b>${money(sales)}</b></div>
+        <div><small>Costs</small><b>${money(cost)}</b></div>
+        <div><small>Profit</small><b class="hot">${money(sales - cost)}</b></div>
+      </div>
+      <div class="msub">${inMonth.length} order${inMonth.length===1?"":"s"} · ${cakes} cake${cakes===1?"":"s"} · Paid ${money(paid)}${sales-paid>0.005?` · <span class="warnc">Unpaid ${money(sales-paid)}</span>`:""}</div>
+    </div>`;
+  if (upcoming.length) h += `<button class="primary shopbtn" id="shopUpcoming"><svg viewBox="0 0 24 24"><path d="M3 4h2l2.4 11h10.2L20 8H7"/><circle cx="9" cy="19.5" r="1.5"/><circle cx="17" cy="19.5" r="1.5"/></svg>Shop for ${upcoming.length} upcoming order${upcoming.length>1?"s":""}</button>`;
+  h += `<div class="seg">
+      <button class="chip ${ofilter==="upcoming"?"on":""}" data-f="upcoming">Upcoming (${upcoming.length})</button>
+      <button class="chip ${ofilter==="done"?"on":""}" data-f="done">Delivered (${all.length-upcoming.length})</button>
+      <button class="chip ${ofilter==="all"?"on":""}" data-f="all">All (${all.length})</button>
+    </div>`;
+  if (!list.length) h += `<div class="card empty">${all.length ? "Nothing here." : "No orders yet. Tap + to add your first one."}</div>`;
+  else h += `<div class="olist">` + list.map(o => { const tot = orderTotal(o), pr = tot - orderCost(o);
+    return `<button class="card ocard ${o.done?"isdone":""}" data-id="${esc(o.id)}">
+      <div class="otop"><span class="odate">${esc(fmtDay(o.due))}</span>${dueLabel(o)}</div>
+      <div class="oname">${esc(o.customer || "No name")}</div>
+      <div class="oitems">${esc(orderLine(o))}</div>
+      <div class="obot"><span class="badge ${o.paid?"paid":"unpaid"}">${o.paid?"Paid":"Not paid"}</span><span class="omoney"><b>${money(tot)}</b><small>profit ${money(pr)}</small></span></div>
+    </button>`; }).join("") + `</div>`;
+  $("#ordersBody").innerHTML = h;
+  $("#mPrev").onclick = () => { omonth = m === 0 ? [y-1, 11] : [y, m-1]; renderOrders(); };
+  $("#mNext").onclick = () => { omonth = m === 11 ? [y+1, 0] : [y, m+1]; renderOrders(); };
+  $("#ordersBody").querySelectorAll(".seg .chip").forEach(c => c.onclick = () => { ofilter = c.dataset.f; renderOrders(); });
+  $("#ordersBody").querySelectorAll(".ocard").forEach(c => c.onclick = () => editOrder(c.dataset.id));
+  const sb = $("#shopUpcoming"); if (sb) sb.onclick = () => shopForOrders(upcoming);
+  updateOrderBadge();
+}
+function shopForOrders(list){
+  const prev = {qty:{...qty}, checked:{...checked}, some:{...some}};
+  qty = {}; checked = {}; some = {};
+  for (const o of list) for (const it of o.items) if (db.recipes[it.recipe] && !db.recipes[it.recipe].sub) qty[it.recipe] = (qty[it.recipe]||0) + num(it.qty);
+  saveState(); go("list");
+  toast(`Shopping list made from ${list.length} order${list.length>1?"s":""}`, "Undo", () => { qty = prev.qty; checked = prev.checked; some = prev.some; saveState(); refreshAll(); });
+}
+function editOrder(oid){
+  const isNew = !oid, src = isNew ? null : ORDERS().find(o => o.id === oid);
+  if (!isNew && !src) return;
+  const o = clone(src || {id:newId("o"), customer:"", due:"", items:[], paid:false, done:false, notes:""});
+  const cakeOpts = sel => cakeIds().map(id => `<option value="${esc(id)}" ${id===sel?"selected":""}>${esc(db.recipes[id].name)}</option>`).join("");
+  const body = () => `
+    <label class="field"><span>Customer</span><input id="o_cust" value="${esc(o.customer)}" placeholder="e.g. Maria"></label>
+    <label class="field"><span>Due date</span><input id="o_due" type="date" value="${esc(o.due)}"></label>
+    <div class="group"><h4>Cakes</h4>
+      ${o.items.length ? "" : `<p class="small" style="margin:0 0 10px">No cakes yet.</p>`}
+      ${o.items.map((it, i) => `<div class="oitem" data-i="${i}">
+        <select class="o_rec">${cakeOpts(it.recipe)}</select>
+        <div class="orow"><div class="stepper sm"><button class="minus" aria-label="One less"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button><output>${it.qty}</output><button class="plus" aria-label="One more"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button></div>
+          <span class="inl"><em>$</em><input class="num o_price" inputmode="decimal" value="${r2(num(it.price))}"><em>each</em></span>
+          <button class="icon odel" aria-label="Remove"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+        <p class="small" style="margin:4px 0 0">Suggested ${money(pricing(db.recipes[it.recipe]||{sections:[]}).price)} · costs you ${money(num(it.cost))}</p>
+      </div>`).join("")}
+      <button class="addline" id="o_add"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add a cake</button>
+    </div>
+    <div class="card pricing">
+      <div class="prow2"><span>Total charged</span><b class="hot">${money(orderTotal(o))}</b></div>
+      <div class="prow2"><span>Your cost</span><b>${money(orderCost(o))}</b></div>
+      <div class="prow2 big"><span>Profit</span><b>${money(orderTotal(o) - orderCost(o))}</b></div>
+    </div>
+    <label class="toggle"><span>Paid</span><button class="switch ${o.paid?"on":""}" id="o_paid" role="switch"></button></label>
+    <label class="toggle"><span>Delivered<small>Moves it out of Upcoming</small></span><button class="switch ${o.done?"on":""}" id="o_done" role="switch"></button></label>
+    <label class="field"><span>Notes <small>(optional)</small></span><input id="o_notes" value="${esc(o.notes||"")}" placeholder="e.g. Happy birthday writing, pickup 3pm"></label>
+    <button class="primary" id="o_save">${isNew?"Save order":"Save"}</button>
+    <div class="btnrow"><button class="ghostbtn" id="o_shop">Shopping list for this order</button>${isNew?"":`<button class="ghostbtn danger" id="o_del">Delete order</button>`}</div>`;
+  openSheet(isNew ? "New order" : "Order", body(), (b, close, el) => mount(b, close, el), {tall:true, onClose: () => { if (view === "orders") renderOrders(); }});
+  function grab(b){
+    o.customer = b.querySelector("#o_cust").value.trim(); o.due = b.querySelector("#o_due").value; o.notes = b.querySelector("#o_notes").value.trim();
+    b.querySelectorAll(".oitem").forEach(row => { const it = o.items[+row.dataset.i]; it.price = num(row.querySelector(".o_price").value); });
+  }
+  function addItem(rid){ const r = db.recipes[rid]; const p = pricing(r); return {recipe: rid, name: r.name, qty: 1, price: Math.round(p.price), cost: r2(p.totalCost)}; }
+  function mount(b, close, el){
+    const re = () => { grab(b); replaceSheetBody(el, body(), nb => mount(nb, close, el)); };
+    b.querySelector("#o_add").onclick = () => { grab(b); const first = cakeIds()[0]; if (!first) return; o.items.push(addItem(first)); re(); };
+    b.querySelectorAll(".oitem").forEach(row => { const i = +row.dataset.i, it = o.items[i];
+      row.querySelector(".o_rec").onchange = e => { grab(b); const n = addItem(e.target.value); n.qty = it.qty; o.items[i] = n; re(); };
+      row.querySelector(".plus").onclick = () => { grab(b); it.qty++; re(); };
+      row.querySelector(".minus").onclick = () => { grab(b); if (it.qty > 1) it.qty--; re(); };
+      row.querySelector(".o_price").onchange = () => re();
+      row.querySelector(".odel").onclick = () => { grab(b); o.items.splice(i, 1); re(); };
+    });
+    b.querySelector("#o_paid").onclick = e => { o.paid = !o.paid; e.currentTarget.classList.toggle("on", o.paid); };
+    b.querySelector("#o_done").onclick = e => { o.done = !o.done; e.currentTarget.classList.toggle("on", o.done); };
+    const save = () => { grab(b); if (!o.items.length) { toast("Add at least one cake"); return false; }
+      const list = ORDERS(), k = list.findIndex(x => x.id === o.id); if (k >= 0) list[k] = o; else list.push(o); saveDb(); return true; };
+    b.querySelector("#o_save").onclick = () => { if (save()) { close(); toast(isNew ? "Order saved" : "Saved"); } };
+    b.querySelector("#o_shop").onclick = () => { if (save()) { close(); shopForOrders([o]); } };
+    const d = b.querySelector("#o_del"); if (d) confirmTap(d, "Tap again to delete", () => { db.orders = ORDERS().filter(x => x.id !== o.id); saveDb(); close(); toast("Order deleted"); });
+  }
+}
+function updateOrderBadge(){
+  const n = ORDERS().filter(o => !o.done && (daysUntil(o.due) ?? 99) <= 2).length, b = $("#orderBadge");
+  if (b) { b.textContent = n; b.classList.toggle("show", !!n); }
+}
+
 // ---------- SETTINGS: backup / restore / reset ----------
 function backupPayload(){ return {app:"CakeCart", backupVersion:1, savedAt:new Date().toISOString(), db, have}; }
 function openSettings(){
@@ -561,10 +724,10 @@ function openSettings(){
     <button class="primary" id="b_save"><svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Save a backup file</button>
     <p class="small">Keep the file somewhere safe, like Google Drive or your email. To move your data to another phone, open CakeCart there and use Restore.</p>
     <div class="group"><h4>Restore from a backup</h4>
-      <p class="small" style="margin:0 0 10px">Replaces the recipes, prices and pantry on this phone with the ones in the file.</p>
+      <p class="small" style="margin:0 0 10px">Replaces the recipes, prices, orders and pantry on this phone with the ones in the file.</p>
       <label class="ghostbtn filebtn">Choose backup file…<input type="file" id="b_file" accept=".json,application/json"></label></div>
     <div class="group"><h4>Start over</h4>
-      <p class="small" style="margin:0 0 10px">Puts back the original recipes and prices from the spreadsheet. Your changes are lost unless you made a backup.</p>
+      <p class="small" style="margin:0 0 10px">Puts back the original recipes and prices from the spreadsheet. Your orders are kept; other changes are lost unless you made a backup.</p>
       <button class="ghostbtn danger" id="b_reset">Reset to original data</button></div>`, (b, close) => {
     b.querySelector("#b_save").onclick = async () => {
       const name = `CakeCart-backup-${new Date().toISOString().slice(0,10)}.json`;
@@ -588,7 +751,7 @@ function openSettings(){
       rd.readAsText(f);
     };
     confirmTap(b.querySelector("#b_reset"), "Tap again to reset everything", () => {
-      db = clone(DEFAULTS); db.deleted = {recipes:[], ingredients:[]}; saveDb(); cleanQty(); saveState(); close(); refreshAll(); toast("Back to the original data"); });
+      const keepOrders = db.orders || []; db = clone(DEFAULTS); db.deleted = {recipes:[], ingredients:[]}; db.orders = keepOrders; saveDb(); cleanQty(); saveState(); close(); refreshAll(); toast("Back to the original data"); });
   });
 }
 
@@ -600,6 +763,8 @@ function refreshAll(){
   if (view === "list") renderList();
   if (view === "recipes") renderRecipes();
   if (view === "ingredients") renderIngredients();
+  if (view === "orders") renderOrders();
+  updateOrderBadge();
 }
 function go(v){
   view = v;
@@ -615,6 +780,12 @@ $("#rq").oninput = e => { rquery = e.target.value; renderRecipes(); };
 $("#iq").oninput = e => { iquery = e.target.value; renderIngredients(); };
 $("#newRecipe").onclick = () => editRecipeDetails(null);
 $("#newIng").onclick = () => editIngredient(null);
+$("#newOrder").onclick = () => editOrder(null);
+$("#clearHave").onclick = () => {
+  const n = Object.keys(have).length; if (!n) return;
+  const prev = {...have}; have = {}; saveState(); renderIngredients();
+  toast(`Unchecked ${n} item${n>1?"s":""}`, "Undo", () => { have = prev; saveState(); refreshAll(); });
+};
 $("#openSettings").onclick = openSettings;
 $("#clearCakes").onclick = clearCakes;
 document.addEventListener("keydown", e => { if (e.key === "Escape" && sheetStack.length) sheetStack[sheetStack.length-1].querySelector(".close").click(); });
