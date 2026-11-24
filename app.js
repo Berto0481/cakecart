@@ -107,7 +107,13 @@ function need(id, v){
 
 // ---------- cake thumbnails ----------
 const LOOKS = [["#FBF0DC","#FFF8EC","#F8E7B0","#C08548"],["#FCE4E6","#E0485F","#F8E7C8","#C08548","#E0485F"],["#F1E4DE","#4A2A1F","#7A4A35","#2B1B16"],["#ECE8F7","#4A3A8C","#F8E8C4","#C08548","#6A59B8"],["#EEF5DC","#C9E08A","#F3F0C4","#C08548","#7FB13A"],["#FBEAD6","#C77B30","#F6E2B3","#B9783F"]];
-function thumb(r){
+function photoFor(id, kind){
+  const p = (typeof PHOTOS !== "undefined" && PHOTOS[id]) || {};
+  return kind === "hero" ? p.hero : (p.slice || p.whole);
+}
+function thumb(r, id, kind){
+  const src = id && photoFor(id, kind || "whole");
+  if (src) return `<div class="thumb photo"><img src="${esc(src)}" alt="${esc(r.name)}" loading="lazy" decoding="async"></div>`;
   const [bg, top, fill, crust, garnish] = r.look || LOOKS[0];
   return `<div class="thumb" style="background:${bg}"><svg viewBox="0 0 64 64">
     <path d="M8 27 L25 13 L57 31 Z" fill="${top}" stroke="rgba(0,0,0,.08)"/>
@@ -170,7 +176,7 @@ function renderCakes(){
   const el = $("#cakeList");
   if (!list.length) { el.innerHTML = `<div class="empty">${cat==="Selected"?"No cakes picked yet.":"No cakes match that search."}</div>`; return; }
   el.innerHTML = list.map(id => { const r = db.recipes[id], k = qty[id] || 0;
-    return `<div class="cake ${k?"sel":""}" data-id="${esc(id)}">${thumb(r)}
+    return `<div class="cake ${k?"sel":""}" data-id="${esc(id)}">${thumb(r, id, "slice")}
       <div class="cinfo"><h3>${esc(r.name)}</h3><p>${esc(r.desc||"")}${r.per==="pan"?" · per pan":""}</p></div>
       <div class="stepper">
         <button class="minus" aria-label="One less" ${k?"":"disabled"}><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
@@ -293,7 +299,7 @@ function renderRecipes(){
     if (r.sub) { const c = recipeCost(r); line = `<span class="kv">Batch <b>${money(c.total)}</b></span><span class="kv">Per ${esc(r.yieldUnit||"unit")} <b>$${(r.yield>0?c.total/r.yield:0).toFixed(4)}</b></span>`; }
     else { const p = pricing(r); line = `<span class="kv">Cost <b>${money(p.totalCost)}</b></span><span class="kv">Sell <b class="hot">${money(p.price)}</b></span><span class="kv">Per ${esc(r.piece||"slice")} <b>${money(p.per)}</b></span>`; }
     const miss = recipeCost(r).missing.length;
-    h += `<button class="cake rcard" data-id="${esc(id)}">${thumb(r)}<div class="cinfo"><h3>${esc(r.name)}</h3><div class="kvs">${line}</div>${miss?`<p class="warn">${miss} ingredient${miss>1?"s":""} without a price</p>`:""}</div><svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>`;
+    h += `<button class="cake rcard" data-id="${esc(id)}">${thumb(r, id, "slice")}<div class="cinfo"><h3>${esc(r.name)}</h3><div class="kvs">${line}</div>${miss?`<p class="warn">${miss} ingredient${miss>1?"s":""} without a price</p>`:""}</div><svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>`;
   }
   h += `</div>`;
   $("#recipeList").innerHTML = h;
@@ -301,7 +307,9 @@ function renderRecipes(){
 }
 function recipeHtml(id){
   const r = db.recipes[id]; if (!r) return "";
-  let h = `<div class="rhead">${thumb(r)}<div><h2>${esc(r.name)}</h2><p>${esc(r.desc||"")}</p><span class="tag">${esc(r.sub?"Homemade ingredient":r.cat||"Other")}</span></div></div>`;
+  const hero = photoFor(id, "hero");
+  let h = hero ? `<div class="hero"><img src="${esc(hero)}" alt="${esc(r.name)}"></div>` : "";
+  h += `<div class="rhead ${hero?"withhero":""}">${hero?"":thumb(r, id, "whole")}<div><h2>${esc(r.name)}</h2><p>${esc(r.desc||"")}</p><span class="tag">${esc(r.sub?"Homemade ingredient":r.cat||"Other")}</span></div></div>`;
   if (r.sub) {
     const c = recipeCost(r), per = r.yield > 0 ? c.total / r.yield : 0;
     const users = Object.values(db.ingredients).filter(i => i.madeFrom === id).flatMap(i => usedIn(Object.keys(db.ingredients).find(k => db.ingredients[k] === i))).map(x => x.name);

@@ -2000,3 +2000,67 @@ const DEFAULTS = {
   }
  }
 };
+
+// Photos for the built-in cakes: slice (Cakes and Recipes lists), hero (full cake at the top of a recipe)
+const PHOTOS = {
+ "Apple Pie Cheesecake": {
+  "slice": "icons/cakes/apple-pie-slice.webp",
+  "hero": "icons/cakes/apple-pie-hero.webp"
+ },
+ "Blueberry Cheesecake": {
+  "slice": "icons/cakes/blueberry-slice.webp",
+  "hero": "icons/cakes/blueberry-hero.webp"
+ },
+ "Cheesecake Brownies": {
+  "slice": "icons/cakes/brownies-slice.webp",
+  "hero": "icons/cakes/brownies-hero.webp"
+ },
+ "Chocolate Cheesecake": {
+  "slice": "icons/cakes/chocolate-slice.webp",
+  "hero": "icons/cakes/chocolate-hero.webp"
+ },
+ "Cinnamon Roll Cheesecake": {
+  "slice": "icons/cakes/cinnamon-roll-slice.webp",
+  "hero": "icons/cakes/cinnamon-roll-hero.webp"
+ },
+ "Key Lime Cheesecake": {
+  "slice": "icons/cakes/key-lime-slice.webp",
+  "hero": "icons/cakes/key-lime-hero.webp"
+ },
+ "New York Cheesecake": {
+  "slice": "icons/cakes/new-york-slice.webp",
+  "hero": "icons/cakes/new-york-hero.webp"
+ },
+ "Oreo Cheesecake": {
+  "slice": "icons/cakes/oreo-slice.webp",
+  "hero": "icons/cakes/oreo-hero.webp"
+ },
+ "Peanut Butter Cheesecake": {
+  "slice": "icons/cakes/peanut-butter-slice.webp",
+  "hero": "icons/cakes/peanut-butter-hero.webp"
+ },
+ "Pumpkin Cheesecake": {
+  "slice": "icons/cakes/pumpkin-slice.webp",
+  "hero": "icons/cakes/pumpkin-hero.webp"
+ },
+ "Raspberry Cheesecake": {
+  "slice": "icons/cakes/raspberry-slice.webp",
+  "hero": "icons/cakes/raspberry-hero.webp"
+ },
+ "Regular Cheesecake": {
+  "slice": "icons/cakes/regular-slice.webp",
+  "hero": "icons/cakes/regular-hero.webp"
+ },
+ "Salted Caramel Cheesecake": {
+  "slice": "icons/cakes/salted-caramel-slice.webp",
+  "hero": "icons/cakes/salted-caramel-hero.webp"
+ },
+ "Strawberry Cheesecake": {
+  "slice": "icons/cakes/strawberry-slice.webp",
+  "hero": "icons/cakes/strawberry-hero.webp"
+ },
+ "Turtle Cheesecake": {
+  "slice": "icons/cakes/turtle-slice.webp",
+  "hero": "icons/cakes/turtle-hero.webp"
+ }
+};
