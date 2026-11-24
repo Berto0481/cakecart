@@ -22,6 +22,10 @@ function mergeDefaults(){
     if (!db.ingredients[id] && !db.deleted.ingredients.includes(id)) { db.ingredients[id] = clone(ing); added++; }
   for (const [id, r] of Object.entries(DEFAULTS.recipes))
     if (!db.recipes[id] && !db.deleted.recipes.includes(id)) { db.recipes[id] = clone(r); added++; }
+  for (const [id, r] of Object.entries(DEFAULTS.recipes)) {
+    const mine = db.recipes[id];
+    if (mine && r.steps && !mine.steps) { mine.steps = clone(r.steps); if (r.source && !mine.source) mine.source = r.source; added++; }
+  }
   if (added || db.version !== DEFAULTS.version) { db.version = DEFAULTS.version; store.set("db", db); }
 }
 
@@ -379,6 +383,13 @@ function recipeHtml(id){
     });
     h += `<button class="addline" data-add="${si}"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add ingredient</button></div>`;
   });
+  const steps = r.steps || [];
+  h += `<div class="sechead"><button class="linkish" id="editSteps">Steps<svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg></button></div>`;
+  if (steps.length) {
+    h += `<button class="primary bakebtn" id="startBake"><svg viewBox="0 0 24 24"><path d="M12 3c2 3 5 5 5 9a5 5 0 0 1-10 0c0-2 1-3 2-4 0 2 1 3 2 3-1-3 0-6 1-8z"/></svg>Start baking</button>
+      <div class="card steps">` + steps.map((s, i) => `<div class="step"><span class="snum">${i+1}</span><div>${esc(s.t)}${s.min?`<span class="stimer"><svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2M9 2h6"/></svg>${fmtMin(s.min)}</span>`:""}</div></div>`).join("") + `</div>`;
+  } else h += `<div class="card empty" style="padding:18px">No steps yet. <button class="linkbtn2" id="editSteps2">Add steps</button></div>`;
+  if (r.source) h += `<a class="srclink" href="${esc(r.source)}" target="_blank" rel="noopener"><svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>Original recipe, with the author's full tips</a>`;
   h += `<div class="btnrow"><button class="ghostbtn" id="addSec">+ Add section</button><button class="ghostbtn" id="editDetails">Edit details</button></div>
     <div class="btnrow"><button class="ghostbtn" id="dupRecipe">Duplicate</button><button class="ghostbtn danger" id="delRecipe">Delete recipe</button></div>`;
   return h;
@@ -397,6 +408,9 @@ function mountRecipe(id, body, close, el){
   body.querySelectorAll("[data-sec]").forEach(b => b.onclick = () => editSection(id, +b.dataset.sec, rerender));
   body.querySelector("#addSec").onclick = () => editSection(id, -1, rerender);
   body.querySelector("#editDetails").onclick = () => editRecipeDetails(id, rerender);
+  body.querySelector("#editSteps").onclick = () => editSteps(id, rerender);
+  const es2 = body.querySelector("#editSteps2"); if (es2) es2.onclick = () => editSteps(id, rerender);
+  const sb = body.querySelector("#startBake"); if (sb) sb.onclick = () => startBaking(id);
   body.querySelector("#dupRecipe").onclick = () => {
     const nid = newId("r"), c = clone(r); c.name = r.name + " (copy)"; db.recipes[nid] = c; saveDb(); close();
     toast("Recipe duplicated"); setTimeout(() => openRecipe(nid), 250);
@@ -713,6 +727,104 @@ function updateOrderBadge(){
   const n = ORDERS().filter(o => !o.done && (daysUntil(o.due) ?? 99) <= 2).length, b = $("#orderBadge");
   if (b) { b.textContent = n; b.classList.toggle("show", !!n); }
 }
+
+
+// ---------- BAKING MODE ----------
+function fmtMin(m){ m = num(m); if (m >= 60) { const h = Math.floor(m/60), mm = Math.round(m%60); return `${h} h${mm?` ${mm} min`:""}`; } return `${r1(m)} min`; }
+const TIMER_RE = /\s*\((?:timer\s*)?(\d+(?:[.,]\d+)?)\s*(min(?:utes?)?|m|h(?:rs?|ours?)?)\)\s*$/i;
+function stepsToText(steps){ return (steps||[]).map(s => s.t + (s.min ? ` (timer ${s.min >= 60 && s.min % 60 === 0 ? (s.min/60)+" h" : s.min+" min"})` : "")).join("\n"); }
+function textToSteps(txt){
+  return txt.split("\n").map(l => l.trim()).filter(Boolean).map(l => {
+    const m = l.match(TIMER_RE); if (!m) return {t: l};
+    const v = num(m[1]), u = m[2].toLowerCase(); return {t: l.replace(TIMER_RE, "").trim(), min: u.startsWith("h") ? v*60 : v};
+  });
+}
+function editSteps(id, done){
+  const r = db.recipes[id];
+  openSheet("Steps", `
+    <p class="small" style="margin:0 0 10px">One step per line. To give a step a timer, end it with <b>(timer 50 min)</b> or <b>(timer 6 h)</b>.</p>
+    <label class="field"><textarea id="st_txt" rows="14" placeholder="Heat the oven to 325°F.&#10;Bake on the center rack. (timer 50 min)">${esc(stepsToText(r.steps))}</textarea></label>
+    <label class="field"><span>Original recipe link <small>(optional)</small></span><input id="st_src" inputmode="url" value="${esc(r.source||"")}" placeholder="https://…"></label>
+    <button class="primary" id="st_save">Save steps</button>`, (b, close) => {
+    b.querySelector("#st_save").onclick = () => {
+      r.steps = textToSteps(b.querySelector("#st_txt").value);
+      const src = b.querySelector("#st_src").value.trim(); if (src) r.source = src; else delete r.source;
+      saveDb(); close(); done(); toast("Steps saved");
+    };
+  }, {tall:true});
+}
+// Timers keep running while you move between steps, and survive closing the app.
+let timers = store.get("timers", []), tickT = null, wakeLock = null, alarmT = null;
+const saveTimers = () => store.set("timers", timers);
+function addTimer(label, min){ timers.push({id:newId("t"), label, end: Date.now() + min*60000, min}); saveTimers(); tick(); }
+const left = t => Math.max(0, Math.round((t.end - Date.now())/1000));
+const clock = s => { const h = Math.floor(s/3600), m = Math.floor(s%3600/60), x = s%60; return (h?h+":"+String(m).padStart(2,"0"):m)+":"+String(x).padStart(2,"0"); };
+function beep(){
+  try { const C = window.AudioContext || window.webkitAudioContext; if (!C) return; const ac = beep.ac = beep.ac || new C();
+    [0, .35, .7].forEach(d => { const o = ac.createOscillator(), g = ac.createGain(); o.frequency.value = 880; o.connect(g); g.connect(ac.destination);
+      g.gain.setValueAtTime(.0001, ac.currentTime+d); g.gain.exponentialRampToValueAtTime(.4, ac.currentTime+d+.02); g.gain.exponentialRampToValueAtTime(.0001, ac.currentTime+d+.28);
+      o.start(ac.currentTime+d); o.stop(ac.currentTime+d+.3); }); } catch(e) {}
+}
+function tick(){
+  clearTimeout(tickT);
+  const ringing = timers.filter(t => left(t) === 0 && !t.rang);
+  ringing.forEach(t => { t.rang = true; saveTimers(); showAlarm(t); });
+  document.querySelectorAll("[data-timer]").forEach(el => { const t = timers.find(x => x.id === el.dataset.timer); if (t) el.querySelector("b").textContent = left(t) ? clock(left(t)) : "Done!"; });
+  if (timers.length) tickT = setTimeout(tick, 1000);
+}
+function showAlarm(t){
+  let el = $("#alarm"); if (!el) { el = document.createElement("div"); el.id = "alarm"; document.body.appendChild(el); }
+  el.innerHTML = `<div class="alarmbox"><svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2M9 2h6"/></svg><div><b>Timer done</b><span>${esc(t.label)}</span></div><button id="alarmOk">OK</button></div>`;
+  el.classList.add("show");
+  const ring = () => { beep(); try { navigator.vibrate && navigator.vibrate([300,150,300]); } catch(e){} };
+  ring(); clearInterval(alarmT); alarmT = setInterval(ring, 2500);
+  $("#alarmOk").onclick = () => { clearInterval(alarmT); el.classList.remove("show"); timers = timers.filter(x => x.id !== t.id); saveTimers(); renderTimers(); };
+}
+function renderTimers(){
+  const bar = $("#bakeTimers"); if (!bar) return;
+  bar.innerHTML = timers.map(t => `<button class="tchip ${left(t)?"":"done"}" data-timer="${t.id}"><svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/></svg><span>${esc(t.label)}</span><b>${left(t)?clock(left(t)):"Done!"}</b><i>×</i></button>`).join("");
+  bar.querySelectorAll(".tchip").forEach(c => c.onclick = () => { timers = timers.filter(x => x.id !== c.dataset.timer); saveTimers(); renderTimers(); });
+  bar.style.display = timers.length ? "" : "none"; tick();
+}
+async function keepAwake(on){
+  try { if (on && "wakeLock" in navigator) { wakeLock = await navigator.wakeLock.request("screen"); }
+        else if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; } } catch(e) {}
+}
+function startBaking(id){
+  const r = db.recipes[id]; if (!r || !(r.steps||[]).length) return;
+  let i = Math.min(store.get("bake-"+id, 0), r.steps.length-1), showIng = false; const got = {};
+  const el = document.createElement("div"); el.className = "bake"; document.body.appendChild(el);
+  keepAwake(true);
+  const onVis = () => { if (document.visibilityState === "visible" && el.isConnected) keepAwake(true); };
+  document.addEventListener("visibilitychange", onVis);
+  const close = () => { keepAwake(false); document.removeEventListener("visibilitychange", onVis); el.remove(); };
+  function render(){
+    const s = r.steps[i], last = i === r.steps.length - 1;
+    el.innerHTML = `
+      <header class="bakehead"><button class="icon" id="bkClose" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+        <div><b>${esc(r.name)}</b><small>Step ${i+1} of ${r.steps.length}</small></div><span class="icon ghost"></span></header>
+      <div class="track bk"><div class="fill" style="width:${(i+1)/r.steps.length*100}%"></div></div>
+      <div id="bakeTimers" class="bktimers"></div>
+      <div class="bakebody">
+        <button class="ingtoggle" id="bkIng">${showIng?"Hide":"Show"} ingredients <svg viewBox="0 0 24 24"><path d="${showIng?"M6 15l6-6 6 6":"M6 9l6 6 6-6"}"/></svg></button>
+        ${showIng ? `<div class="card bkings">${r.sections.map((sec, si) => `<div class="bksec">${esc(sec.title)}</div>` + sec.items.map((it, ii) => { const k = si+"-"+ii;
+            return `<button class="bking ${got[k]?"got":""}" data-k="${k}"><span class="box"><svg viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg></span><span><b>${esc(ingName(it.ing))}</b> ${esc(it.note || fmtAmt(it.ing, it.amt))}</span></button>`; }).join("")).join("")}</div>` : ""}
+        <div class="bkstep"><span class="bknum">${i+1}</span><p>${esc(s.t)}</p>
+          ${s.min ? `<button class="primary bktimer" id="bkTimer"><svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2M9 2h6"/></svg>Start ${fmtMin(s.min)} timer</button>` : ""}
+        </div>
+      </div>
+      <footer class="bakefoot"><button class="ghostbtn" id="bkPrev" ${i?"":"disabled"}>Back</button><button class="primary" id="bkNext">${last?"Finish":"Next step"}</button></footer>`;
+    el.querySelector("#bkClose").onclick = close;
+    el.querySelector("#bkIng").onclick = () => { showIng = !showIng; render(); };
+    el.querySelectorAll(".bking").forEach(b => b.onclick = () => { got[b.dataset.k] = !got[b.dataset.k]; b.classList.toggle("got", got[b.dataset.k]); });
+    el.querySelector("#bkPrev").onclick = () => { if (i) { i--; store.set("bake-"+id, i); render(); } };
+    el.querySelector("#bkNext").onclick = () => { if (last) { store.set("bake-"+id, 0); close(); toast(`${r.name}: all steps done`); } else { i++; store.set("bake-"+id, i); render(); el.querySelector(".bakebody").scrollTop = 0; } };
+    const tb = el.querySelector("#bkTimer"); if (tb) tb.onclick = () => { addTimer(`${short(r)} · step ${i+1}`, s.min); renderTimers(); toast(`${fmtMin(s.min)} timer started`); };
+    renderTimers();
+  }
+  render();
+}
+if (timers.length) tick();
 
 // ---------- SETTINGS: backup / restore / reset ----------
 function backupPayload(){ return {app:"CakeCart", backupVersion:1, savedAt:new Date().toISOString(), db, have}; }
