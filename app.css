@@ -357,3 +357,6 @@ button.cake{width:100%;text-align:left;font:inherit;color:inherit}
 .rcptbtn{color:var(--berry);gap:8px}
 .rcptbtn svg{width:20px;height:20px}
 .sheethead .eyepill{height:40px;font-size:14.5px}
+.seg2{display:flex;gap:8px}
+.seg2 .chip{flex:1;text-align:center;padding:11px 6px;font-size:15px}
+.omethod{color:var(--muted);font-weight:700}

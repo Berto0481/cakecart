@@ -667,7 +667,7 @@ function renderOrders(){
   if (!list.length) h += `<div class="card empty">${all.length ? "Nothing here." : "No orders yet. Tap + to add your first one."}</div>`;
   else h += `<div class="olist">` + list.map(o => { const tot = orderTotal(o), pr = tot - orderCost(o);
     return `<button class="card ocard ${o.done?"isdone":""}" data-id="${esc(o.id)}">
-      <div class="otop"><span class="odate">${esc(fmtDay(o.due))}</span>${dueLabel(o)}</div>
+      <div class="otop"><span class="odate">${esc(fmtDay(o.due))}${o.method?` <span class="omethod">· ${o.method==="delivery"?"Delivery":"Pickup"}</span>`:""}</span>${dueLabel(o)}</div>
       <div class="oname">${esc(o.customer || "No name")}</div>
       <div class="oitems">${esc(orderLine(o))}</div>
       <div class="obot"><span class="badge ${o.paid?"paid":"unpaid"}">${o.paid?"Paid":"Not paid"}</span><span class="omoney"><b>${mm(tot)}</b><small>profit ${mm(pr)}</small></span></div>
@@ -695,6 +695,9 @@ function editOrder(oid){
   const body = () => `
     <label class="field"><span>Customer</span><input id="o_cust" value="${esc(o.customer)}" placeholder="e.g. Maria"></label>
     <label class="field"><span>Due date</span><input id="o_due" type="date" value="${esc(o.due)}"></label>
+    <div class="field"><span>How they get it</span><div class="seg2">
+      <button type="button" class="chip ${o.method==="pickup"?"on":""}" data-m="pickup">Pickup</button>
+      <button type="button" class="chip ${o.method==="delivery"?"on":""}" data-m="delivery">Delivery</button></div></div>
     <div class="group"><h4>Cakes</h4>
       ${o.items.length ? "" : `<p class="small" style="margin:0 0 10px">No cakes yet.</p>`}
       ${o.items.map((it, i) => `<div class="oitem" data-i="${i}">
@@ -741,6 +744,8 @@ function editOrder(oid){
       row.querySelector(".o_price").onchange = () => re();
       row.querySelector(".odel").onclick = () => { grab(b); o.items.splice(i, 1); re(); };
     });
+    b.querySelectorAll(".seg2 .chip").forEach(c => c.onclick = () => { o.method = o.method === c.dataset.m ? "" : c.dataset.m;
+      b.querySelectorAll(".seg2 .chip").forEach(x => x.classList.toggle("on", x.dataset.m === o.method)); });
     b.querySelector("#o_paid").onclick = e => { o.paid = !o.paid; e.currentTarget.classList.toggle("on", o.paid); };
     b.querySelector("#o_done").onclick = e => { o.done = !o.done; e.currentTarget.classList.toggle("on", o.done); };
     const save = () => { grab(b); if (!o.items.length) { toast("Add at least one cake"); return false; }
@@ -887,7 +892,7 @@ async function drawReceipt(o){
     txt("Order confirmation", L, y, `800 46px ${F}`, C.ink);
     txt(`#${String(o.num || "").padStart(4, "0")}`, R, y, `800 34px ${F}`, C.berry, "right");
     y += 64;
-    const info = [["Customer", o.customer || "—"], ["Pickup", fmtLong(o.due) || "To be confirmed"], ["Ordered", fmtLong(o.created)]].filter(r => r[1]);
+    const info = [["Customer", o.customer || "—"], [o.method === "delivery" ? "Delivery" : o.method === "pickup" ? "Pickup" : "Ready on", fmtLong(o.due) || "To be confirmed"], ["Ordered", fmtLong(o.created)]].filter(r => r[1]);
     for (const [k, v] of info) { txt(k, L, y, `700 30px ${F}`, C.muted); txt(v, R, y, `700 32px ${F}`, C.ink, "right"); y += 52; }
     y += 18; rule(y); y += 66;
     // items
@@ -939,7 +944,7 @@ async function openReceipt(oid){
     <img class="receiptimg" src="${url}" alt="Order receipt">
     <button class="primary" id="r_share"><svg viewBox="0 0 24 24"><path d="M12 15V3M7 8l5-5 5 5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>Send to customer</button>
     <div class="btnrow"><button class="ghostbtn" id="r_save">Save image</button><button class="ghostbtn" id="r_biz">Business name on receipt</button></div>
-    <p class="small">Shows the cakes, prices, pickup date and whether it's paid. Your costs and profit are never on it.</p>`, (b, close) => {
+    <p class="small">Shows the cakes, prices, date and whether it's paid. Your costs and profit are never on it.</p>`, (b, close) => {
     const blob = () => new Promise(res => cv.toBlob(res, "image/png"));
     const saveImg = async () => { const bl = await blob(), a = document.createElement("a"); a.href = URL.createObjectURL(bl); a.download = fname; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); };
     b.querySelector("#r_share").onclick = async () => {
