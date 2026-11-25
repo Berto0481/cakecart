@@ -616,6 +616,13 @@ function editIngredient(id, onCreate){
 
 
 // ---------- ORDERS ----------
+let hideMoney = store.get("hideMoney", false);
+const EYE = '<svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+const EYE_OFF = '<svg viewBox="0 0 24 24"><path d="M3 3l18 18M10.6 5.1A10.6 10.6 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.1M6.6 6.6A17 17 0 0 0 2 12s3.5 7 10 7a10 10 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>';
+const DOTS = "$•••.••";
+const mm = x => hideMoney ? DOTS : money(x);
+function paintEye(){ const b = $("#moneyToggle"); if (!b) return; b.innerHTML = (hideMoney ? EYE : EYE_OFF) + `<span>${hideMoney ? "Show" : "Hide"}</span>`; b.classList.toggle("on", hideMoney);
+  b.setAttribute("aria-label", hideMoney ? "Show business numbers" : "Hide business numbers"); }
 let ofilter = "upcoming", omonth = (() => { const d = new Date(); return [d.getFullYear(), d.getMonth()]; })();
 const ORDERS = () => (db.orders = db.orders || []);
 const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; };
@@ -645,11 +652,11 @@ function renderOrders(){
   let h = `<div class="card month">
       <div class="mhead"><button class="icon" id="mPrev" aria-label="Previous month"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button><b>${esc(monthName)}</b><button class="icon" id="mNext" aria-label="Next month"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button></div>
       <div class="mgrid">
-        <div><small>Sales</small><b>${money(sales)}</b></div>
-        <div><small>Costs</small><b>${money(cost)}</b></div>
-        <div><small>Profit</small><b class="hot">${money(sales - cost)}</b></div>
+        <div><small>Sales</small><b>${mm(sales)}</b></div>
+        <div><small>Costs</small><b>${mm(cost)}</b></div>
+        <div><small>Profit</small><b class="hot">${mm(sales - cost)}</b></div>
       </div>
-      <div class="msub">${inMonth.length} order${inMonth.length===1?"":"s"} · ${cakes} cake${cakes===1?"":"s"} · Paid ${money(paid)}${sales-paid>0.005?` · <span class="warnc">Unpaid ${money(sales-paid)}</span>`:""}</div>
+      <div class="msub">${inMonth.length} order${inMonth.length===1?"":"s"} · ${cakes} cake${cakes===1?"":"s"} · Paid ${mm(paid)}${sales-paid>0.005?` · <span class="warnc">Unpaid ${mm(sales-paid)}</span>`:""}</div>
     </div>`;
   if (upcoming.length) h += `<button class="primary shopbtn" id="shopUpcoming"><svg viewBox="0 0 24 24"><path d="M3 4h2l2.4 11h10.2L20 8H7"/><circle cx="9" cy="19.5" r="1.5"/><circle cx="17" cy="19.5" r="1.5"/></svg>Shop for ${upcoming.length} upcoming order${upcoming.length>1?"s":""}</button>`;
   h += `<div class="seg">
@@ -663,15 +670,15 @@ function renderOrders(){
       <div class="otop"><span class="odate">${esc(fmtDay(o.due))}</span>${dueLabel(o)}</div>
       <div class="oname">${esc(o.customer || "No name")}</div>
       <div class="oitems">${esc(orderLine(o))}</div>
-      <div class="obot"><span class="badge ${o.paid?"paid":"unpaid"}">${o.paid?"Paid":"Not paid"}</span><span class="omoney"><b>${money(tot)}</b><small>profit ${money(pr)}</small></span></div>
+      <div class="obot"><span class="badge ${o.paid?"paid":"unpaid"}">${o.paid?"Paid":"Not paid"}</span><span class="omoney"><b>${mm(tot)}</b><small>profit ${mm(pr)}</small></span></div>
     </button>`; }).join("") + `</div>`;
   $("#ordersBody").innerHTML = h;
-  $("#mPrev").onclick = () => { omonth = m === 0 ? [y-1, 11] : [y, m-1]; renderOrders(); };
-  $("#mNext").onclick = () => { omonth = m === 11 ? [y+1, 0] : [y, m+1]; renderOrders(); };
+  if ($("#mPrev")) $("#mPrev").onclick = () => { omonth = m === 0 ? [y-1, 11] : [y, m-1]; renderOrders(); };
+  if ($("#mNext")) $("#mNext").onclick = () => { omonth = m === 11 ? [y+1, 0] : [y, m+1]; renderOrders(); };
   $("#ordersBody").querySelectorAll(".seg .chip").forEach(c => c.onclick = () => { ofilter = c.dataset.f; renderOrders(); });
   $("#ordersBody").querySelectorAll(".ocard").forEach(c => c.onclick = () => editOrder(c.dataset.id));
   const sb = $("#shopUpcoming"); if (sb) sb.onclick = () => shopForOrders(upcoming);
-  updateOrderBadge();
+  updateOrderBadge(); paintEye();
 }
 function shopForOrders(list){
   const prev = {qty:{...qty}, checked:{...checked}, some:{...some}};
@@ -693,30 +700,39 @@ function editOrder(oid){
       ${o.items.map((it, i) => `<div class="oitem" data-i="${i}">
         <select class="o_rec">${cakeOpts(it.recipe)}</select>
         <div class="orow"><div class="stepper sm"><button class="minus" aria-label="One less"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button><output>${it.qty}</output><button class="plus" aria-label="One more"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button></div>
-          <span class="inl"><em>$</em><input class="num o_price" inputmode="decimal" value="${r2(num(it.price))}"><em>each</em></span>
+          <span class="inl"><em>$</em>${hideMoney ? `<input class="num o_price masked" value="•••" disabled data-v="${r2(num(it.price))}">` : `<input class="num o_price" inputmode="decimal" value="${r2(num(it.price))}">`}<em>each</em></span>
           <button class="icon odel" aria-label="Remove"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
-        <p class="small" style="margin:4px 0 0">Suggested ${money(pricing(db.recipes[it.recipe]||{sections:[]}).price)} · costs you ${money(num(it.cost))}</p>
+        <p class="small" style="margin:4px 0 0">Suggested ${mm(pricing(db.recipes[it.recipe]||{sections:[]}).price)} · costs you ${mm(num(it.cost))}</p>
       </div>`).join("")}
       <button class="addline" id="o_add"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add a cake</button>
     </div>
     <div class="card pricing">
-      <div class="prow2"><span>Total charged</span><b class="hot">${money(orderTotal(o))}</b></div>
-      <div class="prow2"><span>Your cost</span><b>${money(orderCost(o))}</b></div>
-      <div class="prow2 big"><span>Profit</span><b>${money(orderTotal(o) - orderCost(o))}</b></div>
+      <div class="prow2"><span>Total charged</span><b class="hot">${mm(orderTotal(o))}</b></div>
+      <div class="prow2"><span>Your cost</span><b>${mm(orderCost(o))}</b></div>
+      <div class="prow2 big"><span>Profit</span><b>${mm(orderTotal(o) - orderCost(o))}</b></div>
     </div>
     <label class="toggle"><span>Paid</span><button class="switch ${o.paid?"on":""}" id="o_paid" role="switch"></button></label>
     <label class="toggle"><span>Delivered<small>Moves it out of Upcoming</small></span><button class="switch ${o.done?"on":""}" id="o_done" role="switch"></button></label>
     <label class="field"><span>Notes <small>(optional)</small></span><input id="o_notes" value="${esc(o.notes||"")}" placeholder="e.g. Happy birthday writing, pickup 3pm"></label>
     <button class="primary" id="o_save">${isNew?"Save order":"Save"}</button>
+    <div class="btnrow"><button class="ghostbtn rcptbtn" id="o_rcpt"><svg viewBox="0 0 24 24"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/></svg>Receipt for customer</button></div>
     <div class="btnrow"><button class="ghostbtn" id="o_shop">Shopping list for this order</button>${isNew?"":`<button class="ghostbtn danger" id="o_del">Delete order</button>`}</div>`;
   openSheet(isNew ? "New order" : "Order", body(), (b, close, el) => mount(b, close, el), {tall:true, onClose: () => { if (view === "orders") renderOrders(); }});
   function grab(b){
     o.customer = b.querySelector("#o_cust").value.trim(); o.due = b.querySelector("#o_due").value; o.notes = b.querySelector("#o_notes").value.trim();
-    b.querySelectorAll(".oitem").forEach(row => { const it = o.items[+row.dataset.i]; it.price = num(row.querySelector(".o_price").value); });
+    b.querySelectorAll(".oitem").forEach(row => { const it = o.items[+row.dataset.i], pi = row.querySelector(".o_price"); it.price = num(pi.dataset.v ?? pi.value); });
   }
   function addItem(rid){ const r = db.recipes[rid]; const p = pricing(r); return {recipe: rid, name: r.name, qty: 1, price: Math.round(p.price), cost: r2(p.totalCost)}; }
   function mount(b, close, el){
     const re = () => { grab(b); replaceSheetBody(el, body(), nb => mount(nb, close, el)); };
+    // Hide / Show in the order's own header, so prices can be revealed without leaving the order
+    const slot = el.querySelector(".sheethead .ghost, .sheethead .eyepill");
+    if (slot) {
+      const pill = document.createElement("button"); pill.className = "eyepill"; pill.type = "button";
+      pill.innerHTML = (hideMoney ? EYE : EYE_OFF) + `<span>${hideMoney ? "Show" : "Hide"}</span>`;
+      pill.onclick = () => { grab(b); hideMoney = !hideMoney; store.set("hideMoney", hideMoney); paintEye(); re(); };
+      slot.replaceWith(pill);
+    }
     b.querySelector("#o_add").onclick = () => { grab(b); const first = cakeIds()[0]; if (!first) return; o.items.push(addItem(first)); re(); };
     b.querySelectorAll(".oitem").forEach(row => { const i = +row.dataset.i, it = o.items[i];
       row.querySelector(".o_rec").onchange = e => { grab(b); const n = addItem(e.target.value); n.qty = it.qty; o.items[i] = n; re(); };
@@ -728,9 +744,12 @@ function editOrder(oid){
     b.querySelector("#o_paid").onclick = e => { o.paid = !o.paid; e.currentTarget.classList.toggle("on", o.paid); };
     b.querySelector("#o_done").onclick = e => { o.done = !o.done; e.currentTarget.classList.toggle("on", o.done); };
     const save = () => { grab(b); if (!o.items.length) { toast("Add at least one cake"); return false; }
-      const list = ORDERS(), k = list.findIndex(x => x.id === o.id); if (k >= 0) list[k] = o; else list.push(o); saveDb(); return true; };
+      if (!o.created) o.created = todayStr();
+      const list = ORDERS(); if (!o.num) o.num = nextOrderNum();
+      const k = list.findIndex(x => x.id === o.id); if (k >= 0) list[k] = o; else list.push(o); saveDb(); return true; };
     b.querySelector("#o_save").onclick = () => { if (save()) { close(); toast(isNew ? "Order saved" : "Saved"); } };
     b.querySelector("#o_shop").onclick = () => { if (save()) { close(); shopForOrders([o]); } };
+    b.querySelector("#o_rcpt").onclick = () => { if (save()) openReceipt(o.id); };
     const d = b.querySelector("#o_del"); if (d) confirmTap(d, "Tap again to delete", () => { db.orders = ORDERS().filter(x => x.id !== o.id); saveDb(); close(); toast("Order deleted"); });
   }
 }
@@ -837,6 +856,117 @@ function startBaking(id){
 }
 if (timers.length) tick();
 
+
+// ---------- RECEIPTS ----------
+const BIZ = () => (db.business = db.business || {name:"", contact:"", thanks:""});
+function nextOrderNum(){ return ORDERS().reduce((a, x) => Math.max(a, num(x.num)), 0) + 1; }
+const fmtLong = s => { const d = parseDay(s); return d ? d.toLocaleDateString(undefined, {weekday:"short", month:"short", day:"numeric", year:"numeric"}) : ""; };
+let logoImg = null;
+function loadLogo(){ return logoImg ? Promise.resolve(logoImg) : new Promise(res => { const im = new Image(); im.onload = () => res(logoImg = im); im.onerror = () => res(null); im.src = "icons/icon-192.png"; }); }
+function wrap(ctx, text, maxW){
+  const words = String(text).split(/\s+/), lines = []; let line = "";
+  for (const w of words) { const t = line ? line + " " + w : w; if (ctx.measureText(t).width > maxW && line) { lines.push(line); line = w; } else line = t; }
+  if (line) lines.push(line); return lines;
+}
+async function drawReceipt(o){
+  try { await Promise.all(["400","700","800"].map(w => document.fonts.load(`${w} 40px Nunito`))); } catch(e) {}
+  const logo = await loadLogo(), biz = BIZ();
+  const W = 1080, P = 72, IN = 64, F = "Nunito, system-ui, sans-serif";
+  const C = {bg:"#FBF5EB", card:"#FFFFFF", ink:"#2A1A20", muted:"#8C7A80", line:"#F0E4E2", wine:"#8E1B3A", berry:"#C8324F", green:"#2E7D4F", greenbg:"#E3F2E8", amber:"#8A5A00", amberbg:"#FFF1D6"};
+  const total = orderTotal(o);
+  function layout(ctx, draw){
+    let y = P + IN; const L = P + IN, R = W - P - IN, cw = R - L;
+    const txt = (s, x, yy, font, color, align = "left") => { if (!draw) return; ctx.font = font; ctx.fillStyle = color; ctx.textAlign = align; ctx.fillText(s, x, yy); };
+    const rule = yy => { if (draw) { ctx.fillStyle = C.line; ctx.fillRect(L, yy, cw, 3); } };
+    // header
+    if (draw && logo) { ctx.save(); ctx.beginPath(); ctx.roundRect(L, y, 120, 120, 28); ctx.clip(); ctx.drawImage(logo, L, y, 120, 120); ctx.restore(); }
+    ctx.font = `800 52px ${F}`; const name = biz.name || "CakeCart";
+    txt(name, L + 148, y + 62, `800 52px ${F}`, C.wine);
+    if (biz.contact) txt(biz.contact, L + 148, y + 106, `600 30px ${F}`, C.muted);
+    y += 170; rule(y); y += 70;
+    txt("Order confirmation", L, y, `800 46px ${F}`, C.ink);
+    txt(`#${String(o.num || "").padStart(4, "0")}`, R, y, `800 34px ${F}`, C.berry, "right");
+    y += 64;
+    const info = [["Customer", o.customer || "—"], ["Pickup", fmtLong(o.due) || "To be confirmed"], ["Ordered", fmtLong(o.created)]].filter(r => r[1]);
+    for (const [k, v] of info) { txt(k, L, y, `700 30px ${F}`, C.muted); txt(v, R, y, `700 32px ${F}`, C.ink, "right"); y += 52; }
+    y += 18; rule(y); y += 66;
+    // items
+    for (const it of o.items) {
+      const nm = db.recipes[it.recipe]?.name || it.name || "Cake";
+      ctx.font = `700 34px ${F}`;
+      const lines = wrap(ctx, `${it.qty} × ${nm}`, cw - 230);
+      lines.forEach((ln, i) => txt(ln, L, y + i*44, `700 34px ${F}`, C.ink));
+      txt(money(num(it.price) * num(it.qty)), R, y, `800 34px ${F}`, C.ink, "right");
+      y += (lines.length - 1) * 44;
+      if (num(it.qty) > 1) { y += 40; txt(`${money(num(it.price))} each`, L, y, `600 27px ${F}`, C.muted); }
+      y += 62;
+    }
+    rule(y - 14); y += 56;
+    txt("Total", L, y, `800 40px ${F}`, C.ink); txt(money(total), R, y, `800 52px ${F}`, C.berry, "right");
+    y += 56;
+    // status pill
+    const st = o.paid ? "Paid in full ✓" : `Balance due ${money(total)}`;
+    ctx.font = `800 30px ${F}`; const sw = ctx.measureText(st).width + 48;
+    if (draw) { ctx.fillStyle = o.paid ? C.greenbg : C.amberbg; ctx.beginPath(); ctx.roundRect(R - sw, y, sw, 56, 28); ctx.fill(); }
+    txt(st, R - sw/2, y + 38, `800 30px ${F}`, o.paid ? C.green : C.amber, "center");
+    y += 56;
+    if (o.notes) {
+      y += 60; txt("Notes", L, y, `700 28px ${F}`, C.muted); y += 46;
+      ctx.font = `600 31px ${F}`; for (const ln of wrap(ctx, o.notes, cw)) { txt(ln, L, y, `600 31px ${F}`, C.ink); y += 44; }
+      y -= 44;
+    }
+    y += 80; rule(y - 30);
+    txt(biz.thanks || "Thank you for your order!", W/2, y + 20, `800 34px ${F}`, C.berry, "center");
+    y += 20 + IN;
+    return y + P;
+  }
+  const probe = document.createElement("canvas").getContext("2d");
+  const H = Math.ceil(layout(probe, false));
+  const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+  const ctx = cv.getContext("2d");
+  ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = C.card; ctx.shadowColor = "rgba(142,27,58,.10)"; ctx.shadowBlur = 40; ctx.shadowOffsetY = 10;
+  ctx.beginPath(); ctx.roundRect(P, P, W - 2*P, H - 2*P, 44); ctx.fill(); ctx.shadowColor = "transparent";
+  layout(ctx, true);
+  return cv;
+}
+async function openReceipt(oid){
+  const o = ORDERS().find(x => x.id === oid); if (!o) return;
+  if (!o.num) { o.num = nextOrderNum(); saveDb(); }
+  const cv = await drawReceipt(o), url = cv.toDataURL("image/png");
+  const fname = `Order-${String(o.num).padStart(4,"0")}${o.customer ? "-" + o.customer.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Za-z0-9]+/g, "") : ""}.png`;
+  openSheet("Receipt", `
+    <img class="receiptimg" src="${url}" alt="Order receipt">
+    <button class="primary" id="r_share"><svg viewBox="0 0 24 24"><path d="M12 15V3M7 8l5-5 5 5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>Send to customer</button>
+    <div class="btnrow"><button class="ghostbtn" id="r_save">Save image</button><button class="ghostbtn" id="r_biz">Business name on receipt</button></div>
+    <p class="small">Shows the cakes, prices, pickup date and whether it's paid. Your costs and profit are never on it.</p>`, (b, close) => {
+    const blob = () => new Promise(res => cv.toBlob(res, "image/png"));
+    const saveImg = async () => { const bl = await blob(), a = document.createElement("a"); a.href = URL.createObjectURL(bl); a.download = fname; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); };
+    b.querySelector("#r_share").onclick = async () => {
+      try { const file = new File([await blob()], fname, {type:"image/png"});
+        if (navigator.canShare && navigator.canShare({files:[file]})) await navigator.share({files:[file], title:"Order confirmation"});
+        else { await saveImg(); toast("Image saved. Attach it in your messaging app."); }
+      } catch(e) { if (e && e.name !== "AbortError") toast("Couldn’t share: " + (e.message || e)); }
+    };
+    b.querySelector("#r_save").onclick = () => saveImg().catch(e => toast("Couldn’t save: " + (e.message || e)));
+    b.querySelector("#r_biz").onclick = () => editBusiness(() => { close(); setTimeout(() => openReceipt(oid), 250); });
+  }, {tall:true});
+}
+function editBusiness(done){
+  const biz = BIZ();
+  openSheet("Your business", `
+    <p class="small" style="margin:0 0 12px">Shown at the top and bottom of customer receipts.</p>
+    <label class="field"><span>Business name</span><input id="bz_name" value="${esc(biz.name)}" placeholder="CakeCart"></label>
+    <label class="field"><span>Contact <small>(phone, Instagram… optional)</small></span><input id="bz_contact" value="${esc(biz.contact)}" placeholder="e.g. 787-555-0123 · @mycheesecakes"></label>
+    <label class="field"><span>Thank-you line</span><input id="bz_thanks" value="${esc(biz.thanks)}" placeholder="Thank you for your order!"></label>
+    <button class="primary" id="bz_save">Save</button>`, (b, close) => {
+    b.querySelector("#bz_save").onclick = () => {
+      biz.name = b.querySelector("#bz_name").value.trim(); biz.contact = b.querySelector("#bz_contact").value.trim(); biz.thanks = b.querySelector("#bz_thanks").value.trim();
+      saveDb(); close(); toast("Saved"); if (done) done();
+    };
+  });
+}
+
 // ---------- SETTINGS: backup / restore / reset ----------
 function backupPayload(){ return {app:"CakeCart", backupVersion:1, savedAt:new Date().toISOString(), db, have}; }
 function openSettings(){
@@ -844,6 +974,7 @@ function openSettings(){
   const nR = Object.values(db.recipes).length, nI = Object.values(db.ingredients).filter(i=>!i.madeFrom).length;
   openSheet("Settings & backup", `
     <div class="card note2"><b>Your data lives on this phone.</b> ${nR} recipes and ${nI} ingredients. Make a backup now and then, and before switching phones.<br><span class="small" style="margin:0">${last ? `Last backup: ${new Date(last).toLocaleDateString()}` : "No backup made yet."}</span></div>
+    <button class="ghostbtn" id="b_biz" style="width:100%;margin-bottom:14px">Your business name for receipts${BIZ().name?`: ${esc(BIZ().name)}`:""}</button>
     <button class="primary" id="b_save"><svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Save a backup file</button>
     <p class="small">Keep the file somewhere safe, like Google Drive or your email. To move your data to another phone, open CakeCart there and use Restore.</p>
     <div class="group"><h4>Restore from a backup</h4>
@@ -852,6 +983,7 @@ function openSettings(){
     <div class="group"><h4>Start over</h4>
       <p class="small" style="margin:0 0 10px">Puts back the original recipes and prices from the spreadsheet. Your orders are kept; other changes are lost unless you made a backup.</p>
       <button class="ghostbtn danger" id="b_reset">Reset to original data</button></div>`, (b, close) => {
+    b.querySelector("#b_biz").onclick = () => { close(); setTimeout(() => editBusiness(), 250); };
     b.querySelector("#b_save").onclick = async () => {
       const name = `CakeCart-backup-${new Date().toISOString().slice(0,10)}.json`;
       const blob = new Blob([JSON.stringify(backupPayload(), null, 1)], {type:"application/json"});
@@ -904,6 +1036,8 @@ $("#iq").oninput = e => { iquery = e.target.value; renderIngredients(); };
 $("#newRecipe").onclick = () => editRecipeDetails(null);
 $("#newIng").onclick = () => editIngredient(null);
 $("#newOrder").onclick = () => editOrder(null);
+$("#moneyToggle").onclick = () => { hideMoney = !hideMoney; store.set("hideMoney", hideMoney); renderOrders();
+  toast(hideMoney ? "Amounts hidden" : "Amounts showing"); };
 $("#clearHave").onclick = () => {
   const n = Object.keys(have).length; if (!n) return;
   const prev = {...have}; have = {}; saveState(); renderIngredients();

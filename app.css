@@ -342,3 +342,18 @@ button.cake{width:100%;text-align:left;font:inherit;color:inherit}
 .alarmbox b{display:block;font-size:17px}
 .alarmbox span{opacity:.8;font-size:14px}
 .alarmbox button{border:0;border-radius:12px;background:#fff;color:var(--ink);font:inherit;font-weight:800;padding:10px 18px}
+.icon.eye{color:var(--muted)}
+.icon.eye.on{color:var(--berry);background:var(--blush)}
+.clientnote{display:flex;align-items:center;gap:12px;padding:14px 16px;margin-bottom:12px}
+.clientnote svg{width:26px;height:26px;color:var(--berry);flex:none}
+.clientnote b{display:block;font-size:15px}
+.clientnote span{font-size:13px;color:var(--muted)}
+.eyepill{display:flex;align-items:center;gap:5px;height:42px;border:0;background:none;color:var(--berry);font:inherit;font-weight:800;font-size:15px;padding:0 6px;flex:none}
+.eyepill svg{width:22px;height:22px}
+.eyespacer{width:76px;flex:none}
+.num.masked{color:var(--muted);letter-spacing:2px}
+@media (max-width:420px){.eyespacer{width:40px}}
+.receiptimg{display:block;width:100%;border-radius:18px;box-shadow:var(--shadow);margin-bottom:14px}
+.rcptbtn{color:var(--berry);gap:8px}
+.rcptbtn svg{width:20px;height:20px}
+.sheethead .eyepill{height:40px;font-size:14.5px}
