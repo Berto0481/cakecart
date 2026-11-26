@@ -2612,3 +2612,23 @@ const PHOTOS = {
   "hero": "icons/cakes/turtle-hero.webp"
  }
 };
+
+// Spanish names for receipts and the price menu (you can change them in each recipe's details)
+const NAMES_ES = {
+  "Apple Pie Cheesecake": "Cheesecake de pie de manzana",
+  "Blueberry Cheesecake": "Cheesecake de blueberry",
+  "Cheesecake Brownies": "Brownies de cheesecake",
+  "Chocolate Cheesecake": "Cheesecake de chocolate",
+  "Cinnamon Roll Cheesecake": "Cheesecake de rollo de canela",
+  "Key Lime Cheesecake": "Cheesecake de key lime",
+  "New York Cheesecake": "Cheesecake estilo New York",
+  "Oreo Cheesecake": "Cheesecake de Oreo",
+  "Peanut Butter Cheesecake": "Cheesecake de mantequilla de maní",
+  "Pumpkin Cheesecake": "Cheesecake de calabaza",
+  "Raspberry Cheesecake": "Cheesecake de frambuesa",
+  "Regular Cheesecake": "Cheesecake clásico",
+  "Salted Caramel Cheesecake": "Cheesecake de caramelo salado",
+  "Strawberry Cheesecake": "Cheesecake de fresa",
+  "Turtle Cheesecake": "Cheesecake Turtle"
+};
+for (const [id, es] of Object.entries(NAMES_ES)) if (DEFAULTS.recipes[id]) DEFAULTS.recipes[id].nameEs = es;

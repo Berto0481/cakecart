@@ -25,6 +25,7 @@ function mergeDefaults(){
   for (const [id, r] of Object.entries(DEFAULTS.recipes)) {
     const mine = db.recipes[id];
     if (mine && r.steps && !mine.steps) { mine.steps = clone(r.steps); if (r.source && !mine.source) mine.source = r.source; added++; }
+    if (mine && r.nameEs && !mine.nameEs && mine.name === r.name) { mine.nameEs = r.nameEs; added++; }
   }
   // v4: the original brownie recipe uses a 9×9 pan (about 16 brownies), not 9×13 / 24.
   // Only switch it if it's still on the old built-in setting, so your own changes are kept.
@@ -440,6 +441,7 @@ function editRecipeDetails(id, done){
   const catOpts = [...CATS, "Homemade ingredient"].map(c => `<option ${((v.sub?"Homemade ingredient":v.cat)===c)?"selected":""}>${c}</option>`).join("");
   openSheet(isNew ? "New recipe" : "Edit details", `
     <label class="field"><span>Name</span><input id="d_name" value="${esc(v.name)}" placeholder="e.g. Mango Cheesecake"></label>
+    <label class="field"><span>Name in Spanish <small>(receipts &amp; menu, optional)</small></span><input id="d_namees" value="${esc(v.nameEs||"")}" placeholder="e.g. Cheesecake de mango"></label>
     <label class="field"><span>Short description</span><input id="d_desc" value="${esc(v.desc||"")}" placeholder="Shown under the name"></label>
     <label class="field"><span>Type</span><select id="d_cat">${catOpts}</select></label>
     <div id="d_more"></div>
@@ -461,6 +463,7 @@ function editRecipeDetails(id, done){
       const rec = r || {sections:[{title:"Ingredients", items:[]}], markup:3, packaging:0, pieces: type==="Brownies"?16:12,
         look: LOOKS[Object.keys(db.recipes).length % LOOKS.length]};
       rec.name = name; rec.desc = b.querySelector("#d_desc").value.trim();
+      const nes = b.querySelector("#d_namees").value.trim(); if (nes) rec.nameEs = nes; else delete rec.nameEs;
       if (sub) {
         rec.sub = true; rec.cat = "Homemade"; rec.yield = num(b.querySelector("#d_yield").value) || 1; rec.yieldUnit = b.querySelector("#d_yu").value;
         let ingId = Object.keys(db.ingredients).find(k => db.ingredients[k].madeFrom === rid);
@@ -658,7 +661,7 @@ function renderOrders(){
       </div>
       <div class="msub">${inMonth.length} order${inMonth.length===1?"":"s"} · ${cakes} cake${cakes===1?"":"s"} · Paid ${mm(paid)}${sales-paid>0.005?` · <span class="warnc">Unpaid ${mm(sales-paid)}</span>`:""}</div>
     </div>`;
-  if (upcoming.length) h += `<button class="primary shopbtn" id="shopUpcoming"><svg viewBox="0 0 24 24"><path d="M3 4h2l2.4 11h10.2L20 8H7"/><circle cx="9" cy="19.5" r="1.5"/><circle cx="17" cy="19.5" r="1.5"/></svg>Shop for ${upcoming.length} upcoming order${upcoming.length>1?"s":""}</button>`;
+  if (upcoming.length) h += `<button class="primary shopbtn" id="shopUpcoming"><svg viewBox="0 0 24 24"><path d="M3 4h2l2.4 11h10.2L20 8H7"/><circle cx="9" cy="19.5" r="1.5"/><circle cx="17" cy="19.5" r="1.5"/></svg>Shop for upcoming orders</button>`;
   h += `<div class="seg">
       <button class="chip ${ofilter==="upcoming"?"on":""}" data-f="upcoming">Upcoming (${upcoming.length})</button>
       <button class="chip ${ofilter==="done"?"on":""}" data-f="done">Delivered (${all.length-upcoming.length})</button>
@@ -677,8 +680,32 @@ function renderOrders(){
   if ($("#mNext")) $("#mNext").onclick = () => { omonth = m === 11 ? [y+1, 0] : [y, m+1]; renderOrders(); };
   $("#ordersBody").querySelectorAll(".seg .chip").forEach(c => c.onclick = () => { ofilter = c.dataset.f; renderOrders(); });
   $("#ordersBody").querySelectorAll(".ocard").forEach(c => c.onclick = () => editOrder(c.dataset.id));
-  const sb = $("#shopUpcoming"); if (sb) sb.onclick = () => shopForOrders(upcoming);
+  const sb = $("#shopUpcoming"); if (sb) sb.onclick = () => pickShopOrders(upcoming);
   updateOrderBadge(); paintEye();
+}
+// Choose which upcoming orders to shop for; the next 7 days are ticked to start
+function pickShopOrders(upcoming){
+  const today = parseDay(todayStr()), within = (o, days) => { const d = parseDay(o.due); return d && (d - today) / 864e5 <= days; };
+  const pick = new Set(upcoming.filter(o => within(o, 7)).map(o => o.id));
+  if (!pick.size) upcoming.forEach(o => pick.add(o.id));
+  const cakesIn = o => o.items.reduce((a, it) => a + num(it.qty), 0);
+  openSheet("Shop for orders", `<p class="small" style="margin:0 0 12px">Pick the orders to buy ingredients for. Your Shopping list will be replaced; you can undo.</p>
+    <div class="chips shopquick"><button class="chip" data-q="7">Next 7 days</button><button class="chip" data-q="14">Next 14 days</button><button class="chip" data-q="all">All</button></div>
+    <div class="pickl" id="sp_list"></div>
+    <button class="primary" id="sp_go"></button>`, (b, close) => {
+    const paint = () => {
+      b.querySelector("#sp_list").innerHTML = upcoming.map(o => `<button class="pickrow ${pick.has(o.id)?"on":""}" data-id="${esc(o.id)}">
+        <span class="pickbox" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
+        <span class="picktxt"><b>${esc(o.customer || "No name")}</b><small>${esc(fmtDay(o.due))} · ${esc(orderLine(o))}</small></span></button>`).join("");
+      b.querySelectorAll(".pickrow").forEach(r => r.onclick = () => { pick.has(r.dataset.id) ? pick.delete(r.dataset.id) : pick.add(r.dataset.id); paint(); });
+      const chosen = upcoming.filter(o => pick.has(o.id)), n = chosen.reduce((a, o) => a + cakesIn(o), 0);
+      const go = b.querySelector("#sp_go"); go.disabled = !chosen.length;
+      go.textContent = chosen.length ? `Make shopping list · ${n} cake${n===1?"":"s"}` : "Pick at least one order";
+    };
+    b.querySelectorAll("[data-q]").forEach(c => c.onclick = () => { pick.clear(); upcoming.filter(o => c.dataset.q === "all" || within(o, +c.dataset.q)).forEach(o => pick.add(o.id)); paint(); });
+    b.querySelector("#sp_go").onclick = () => { const chosen = upcoming.filter(o => pick.has(o.id)); if (!chosen.length) return; close(); shopForOrders(chosen); };
+    paint();
+  });
 }
 function shopForOrders(list){
   const prev = {qty:{...qty}, checked:{...checked}, some:{...some}};
@@ -885,7 +912,29 @@ async function checkUpdate(force){
 // ---------- RECEIPTS ----------
 const BIZ = () => (db.business = db.business || {name:"", contact:"", thanks:""});
 function nextOrderNum(){ return ORDERS().reduce((a, x) => Math.max(a, num(x.num)), 0) + 1; }
-const fmtLong = s => { const d = parseDay(s); return d ? d.toLocaleDateString(undefined, {weekday:"short", month:"short", day:"numeric", year:"numeric"}) : ""; };
+const fmtLong = (s, L) => { const d = parseDay(s); return d ? d.toLocaleDateString(L === "es" ? "es-PR" : undefined, {weekday:"short", month:"short", day:"numeric", year:"numeric"}) : ""; };
+// Words on customer receipts and the price menu, in English and Spanish
+const RT = {
+  en: {conf:"Order confirmation", cust:"Customer", delivery:"Delivery", pickup:"Pickup", ready:"Ready on", tbc:"To be confirmed", ordered:"Ordered",
+       each: x => `${x} each`, total:"Total", paid:"Paid in full ✓", due: x => `Balance due ${x}`, notes:"Notes", thanks:"Thank you for your order!",
+       menu:"Menu", whole:"Whole", per: w => w ? w.charAt(0).toUpperCase() + w.slice(1) : "Slice"},
+  es: {conf:"Confirmación de orden", cust:"Cliente", delivery:"Entrega", pickup:"Para recoger", ready:"Lista el", tbc:"Por confirmar", ordered:"Fecha de orden",
+       each: x => `${x} c/u`, total:"Total", paid:"Pagado en su totalidad ✓", due: x => `Balance pendiente ${x}`, notes:"Notas", thanks:"¡Gracias por su orden!",
+       menu:"Menú", whole:"Entero", per: w => ({slice:"Porción", brownie:"Brownie"})[String(w||"slice").toLowerCase()] || (w || "Porción")}
+};
+const rlang = () => BIZ().lang === "es" ? "es" : "en";
+const cakeName = (r, fallback, L) => (L === "es" && r && r.nameEs) || (r && r.name) || fallback || "Cake";
+// "9\" cheesecake · 12 slices" in either language
+function sizeLine(r, L){
+  const n = num(r.pieces), w = String(r.piece || "slice");
+  if (L !== "es") return [r.size, n ? `${n} ${w}${n === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ");
+  const size = String(r.size || "").replace(/^(\S+)\s+cheesecake$/i, "cheesecake de $1").replace(/^(\S+)\s+pan$/i, "molde de $1");
+  const pw = ({slice:"porciones", brownie:"brownies"})[w.toLowerCase()] || w;
+  return [size, n ? `${n} ${pw}` : ""].filter(Boolean).join(" · ");
+}
+// A language switch shown above receipts and the menu
+const langChips = L => `<div class="seg2 langseg"><button type="button" class="chip ${L==="en"?"on":""}" data-lang="en">English</button><button type="button" class="chip ${L==="es"?"on":""}" data-lang="es">Español</button></div>`;
+function hookLang(b, redo){ b.querySelectorAll("[data-lang]").forEach(c => c.onclick = () => { if (c.classList.contains("on")) return; BIZ().lang = c.dataset.lang; saveDb(); redo(); }); }
 let logoImg = null;
 function loadLogo(){ return logoImg ? Promise.resolve(logoImg) : new Promise(res => { const im = new Image(); im.onload = () => res(logoImg = im); im.onerror = () => res(null); im.src = "icons/icon-192.png"; }); }
 function wrap(ctx, text, maxW){
@@ -919,7 +968,7 @@ async function drawReceipt(o){
   const biz = BIZ(), bizLogo = await loadBizLogo(), logo = bizLogo ? null : await loadLogo();
   const W = 1080, P = 72, IN = 64, F = "Nunito, system-ui, sans-serif";
   const C = {bg:"#FBF5EB", card:"#FFFFFF", ink:"#2A1A20", muted:"#8C7A80", line:"#F0E4E2", wine:"#8E1B3A", berry:"#C8324F", green:"#2E7D4F", greenbg:"#E3F2E8", amber:"#8A5A00", amberbg:"#FFF1D6"};
-  const total = orderTotal(o);
+  const total = orderTotal(o), Lg = rlang(), T = RT[Lg];
   function layout(ctx, draw){
     let y = P + IN; const L = P + IN, R = W - P - IN, cw = R - L;
     const txt = (s, x, yy, font, color, align = "left") => { if (!draw) return; ctx.font = font; ctx.fillStyle = color; ctx.textAlign = align; ctx.fillText(s, x, yy); };
@@ -938,39 +987,39 @@ async function drawReceipt(o){
     if (biz.contact) txt(biz.contact, L + 148, y + 106, `600 30px ${F}`, C.muted);
     y += 170; rule(y); y += 70;
     }
-    txt("Order confirmation", L, y, `800 46px ${F}`, C.ink);
+    txt(T.conf, L, y, `800 46px ${F}`, C.ink);
     txt(`#${String(o.num || "").padStart(4, "0")}`, R, y, `800 34px ${F}`, C.berry, "right");
     y += 64;
-    const info = [["Customer", o.customer || "—"], [o.method === "delivery" ? "Delivery" : o.method === "pickup" ? "Pickup" : "Ready on", fmtLong(o.due) || "To be confirmed"], ["Ordered", fmtLong(o.created)]].filter(r => r[1]);
+    const info = [[T.cust, o.customer || "—"], [o.method === "delivery" ? T.delivery : o.method === "pickup" ? T.pickup : T.ready, fmtLong(o.due, Lg) || T.tbc], [T.ordered, fmtLong(o.created, Lg)]].filter(r => r[1]);
     for (const [k, v] of info) { txt(k, L, y, `700 30px ${F}`, C.muted); txt(v, R, y, `700 32px ${F}`, C.ink, "right"); y += 52; }
     y += 18; rule(y); y += 66;
     // items
     for (const it of o.items) {
-      const nm = db.recipes[it.recipe]?.name || it.name || "Cake";
+      const nm = cakeName(db.recipes[it.recipe], it.name, Lg);
       ctx.font = `700 34px ${F}`;
       const lines = wrap(ctx, `${it.qty} × ${nm}`, cw - 230);
       lines.forEach((ln, i) => txt(ln, L, y + i*44, `700 34px ${F}`, C.ink));
       txt(money(num(it.price) * num(it.qty)), R, y, `800 34px ${F}`, C.ink, "right");
       y += (lines.length - 1) * 44;
-      if (num(it.qty) > 1) { y += 40; txt(`${money(num(it.price))} each`, L, y, `600 27px ${F}`, C.muted); }
+      if (num(it.qty) > 1) { y += 40; txt(T.each(money(num(it.price))), L, y, `600 27px ${F}`, C.muted); }
       y += 62;
     }
     rule(y - 14); y += 56;
-    txt("Total", L, y, `800 40px ${F}`, C.ink); txt(money(total), R, y, `800 52px ${F}`, C.berry, "right");
+    txt(T.total, L, y, `800 40px ${F}`, C.ink); txt(money(total), R, y, `800 52px ${F}`, C.berry, "right");
     y += 56;
     // status pill
-    const st = o.paid ? "Paid in full ✓" : `Balance due ${money(total)}`;
+    const st = o.paid ? T.paid : T.due(money(total));
     ctx.font = `800 30px ${F}`; const sw = ctx.measureText(st).width + 48;
     if (draw) { ctx.fillStyle = o.paid ? C.greenbg : C.amberbg; ctx.beginPath(); ctx.roundRect(R - sw, y, sw, 56, 28); ctx.fill(); }
     txt(st, R - sw/2, y + 38, `800 30px ${F}`, o.paid ? C.green : C.amber, "center");
     y += 56;
     if (o.notes) {
-      y += 60; txt("Notes", L, y, `700 28px ${F}`, C.muted); y += 46;
+      y += 60; txt(T.notes, L, y, `700 28px ${F}`, C.muted); y += 46;
       ctx.font = `600 31px ${F}`; for (const ln of wrap(ctx, o.notes, cw)) { txt(ln, L, y, `600 31px ${F}`, C.ink); y += 44; }
       y -= 44;
     }
     y += 80; rule(y - 30);
-    txt(biz.thanks || "Thank you for your order!", W/2, y + 20, `800 34px ${F}`, C.berry, "center");
+    txt((Lg === "es" ? biz.thanksEs : biz.thanks) || T.thanks, W/2, y + 20, `800 34px ${F}`, C.berry, "center");
     y += 20 + IN;
     return y + P;
   }
@@ -990,6 +1039,7 @@ async function openReceipt(oid){
   const cv = await drawReceipt(o), url = cv.toDataURL("image/png");
   const fname = `Order-${String(o.num).padStart(4,"0")}${o.customer ? "-" + o.customer.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Za-z0-9]+/g, "") : ""}.png`;
   openSheet("Receipt", `
+    ${langChips(rlang())}
     <img class="receiptimg" src="${url}" alt="Order receipt">
     <button class="primary" id="r_share"><svg viewBox="0 0 24 24"><path d="M12 15V3M7 8l5-5 5 5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>Send to customer</button>
     <div class="btnrow"><button class="ghostbtn" id="r_save">Save image</button><button class="ghostbtn" id="r_biz">Name &amp; logo</button></div>
@@ -1005,6 +1055,109 @@ async function openReceipt(oid){
     };
     b.querySelector("#r_save").onclick = () => (IS_APP ? blob().then(bl => Native.shareFile(fname, bl, "Save receipt")) : saveImg()).catch(e => toast("Couldn’t save: " + (e.message || e)));
     b.querySelector("#r_biz").onclick = () => editBusiness(() => { close(); setTimeout(() => openReceipt(oid), 250); });
+    hookLang(b, () => { close(); setTimeout(() => openReceipt(oid), 250); });
+  }, {tall:true});
+}
+// ---------- PRICE MENU (an image to post or send to customers) ----------
+const MENU = () => { const m = store.get("menu", {}); m.off = m.off || {}; m.price = m.price || {}; if (m.slices == null) m.slices = true; m.note = m.note || ""; return m; };
+const menuIds = () => cakeIds();
+const fmtP = v => Math.abs(v - Math.round(v)) < 0.005 ? `$${Math.round(v)}` : money(v);
+function menuPrice(id, m){ const p = num(m.price[id]); if (p > 0) return p; const c = pricing(db.recipes[id]).price; return c > 0 ? Math.ceil(c) : 0; }
+const slicePrice = (r, whole) => num(r.pieces) > 0 && whole > 0 ? Math.ceil(whole / num(r.pieces) * 4) / 4 : 0;
+async function drawMenu(m){
+  try { await Promise.all(["600","700","800"].map(w => document.fonts.load(`${w} 40px Nunito`))); } catch(e) {}
+  const biz = BIZ(), bizLogo = await loadBizLogo(), logo = bizLogo ? null : await loadLogo(), Lg = rlang(), T = RT[Lg];
+  const W = 1080, P = 72, IN = 64, F = "Nunito, system-ui, sans-serif";
+  const C = {bg:"#FBF5EB", card:"#FFFFFF", ink:"#2A1A20", muted:"#8C7A80", line:"#F0E4E2", wine:"#8E1B3A", berry:"#C8324F"};
+  const rows = menuIds().filter(id => !m.off[id]).map(id => ({r: db.recipes[id], whole: menuPrice(id, m)})).filter(x => x.whole > 0);
+  function layout(ctx, draw){
+    let y = P + IN; const L = P + IN, R = W - P - IN, cw = R - L;
+    const txt = (s, x, yy, font, color, align = "left") => { if (!draw) return; ctx.font = font; ctx.fillStyle = color; ctx.textAlign = align; ctx.fillText(s, x, yy); };
+    const rule = yy => { if (draw) { ctx.fillStyle = C.line; ctx.fillRect(L, yy, cw, 3); } };
+    if (bizLogo) {
+      const k = Math.min(320 / bizLogo.width, 320 / bizLogo.height), lw = bizLogo.width * k, lh = bizLogo.height * k;
+      if (draw) ctx.drawImage(bizLogo, W/2 - lw/2, y - 20, lw, lh);
+      y += lh + 40;
+    } else {
+      if (draw && logo) { ctx.save(); ctx.beginPath(); ctx.roundRect(W/2 - 60, y, 120, 120, 28); ctx.clip(); ctx.drawImage(logo, W/2 - 60, y, 120, 120); ctx.restore(); }
+      y += 180; txt(biz.name || "CakeCart", W/2, y, `800 54px ${F}`, C.wine, "center"); y += 50;
+    }
+    txt(T.menu.toUpperCase(), W/2, y + 10, `800 40px ${F}`, C.berry, "center");
+    if (draw) { ctx.font = `800 40px ${F}`; const tw = ctx.measureText(T.menu.toUpperCase()).width; ctx.fillStyle = C.line; ctx.fillRect(L, y - 4, (cw - tw) / 2 - 30, 3); ctx.fillRect(W/2 + tw/2 + 30, y - 4, (cw - tw) / 2 - 30, 3); }
+    y += 90;
+    rows.forEach(({r, whole}, i) => {
+      ctx.font = `800 38px ${F}`;
+      const lines = wrap(ctx, cakeName(r, "", Lg), cw - 230);
+      lines.forEach((ln, j) => txt(ln, L, y + j*46, `800 38px ${F}`, C.ink));
+      txt(fmtP(whole), R, y, `800 44px ${F}`, C.berry, "right");
+      let yl = y + (lines.length - 1) * 46 + 42;
+      const sz = sizeLine(r, Lg); if (sz) txt(sz, L, yl, `600 27px ${F}`, C.muted);
+      const sp = m.slices ? slicePrice(r, whole) : 0;
+      if (sp) txt(`${T.per(r.piece)} ${money(sp)}`, R, y + 42, `700 27px ${F}`, C.muted, "right");
+      y = Math.max(yl, y + 42) + 50;
+      if (i < rows.length - 1) { rule(y - 6); y += 58; }
+    });
+    if (!rows.length) { txt(Lg === "es" ? "Añade precios para ver el menú" : "Add prices to see your menu", W/2, y, `700 32px ${F}`, C.muted, "center"); y += 40; }
+    y += 40;
+    if (m.note || biz.contact) { rule(y); y += 70; }
+    if (m.note) { ctx.font = `700 32px ${F}`; for (const ln of wrap(ctx, m.note, cw)) { txt(ln, W/2, y, `700 32px ${F}`, C.ink, "center"); y += 44; } y += 6; }
+    if (biz.contact) { txt(biz.contact, W/2, y, `600 30px ${F}`, C.muted, "center"); y += 44; }
+    return y - 44 + IN + P;
+  }
+  const probe = document.createElement("canvas").getContext("2d");
+  const H = Math.ceil(layout(probe, false));
+  const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+  const ctx = cv.getContext("2d");
+  ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = C.card; ctx.shadowColor = "rgba(142,27,58,.10)"; ctx.shadowBlur = 40; ctx.shadowOffsetY = 10;
+  ctx.beginPath(); ctx.roundRect(P, P, W - 2*P, H - 2*P, 44); ctx.fill(); ctx.shadowColor = "transparent";
+  layout(ctx, true);
+  return cv;
+}
+// Share or save a picture: share sheet when the phone allows it, otherwise a download
+async function shareImage(cv, fname, title, saveOnly){
+  const blob = await new Promise(res => cv.toBlob(res, "image/png"));
+  const save = () => { const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = fname; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); };
+  if (IS_APP) { try { await Native.shareFile(fname, blob, title); } catch(e) { if (!/cancel/i.test(e && e.message || "")) toast("Couldn’t share: " + (e.message || e)); } return; }
+  if (saveOnly) { save(); toast("Image saved"); return; }
+  try { const file = new File([blob], fname, {type:"image/png"});
+    if (navigator.canShare && navigator.canShare({files:[file]})) await navigator.share({files:[file], title});
+    else { save(); toast("Image saved. Attach it in your messaging app."); }
+  } catch(e) { if (e && e.name !== "AbortError") { save(); toast("Image saved. Attach it in your messaging app."); } }
+}
+async function openMenu(){
+  const m = MENU();
+  let cv = await drawMenu(m);
+  openSheet("Price menu", `
+    ${langChips(rlang())}
+    <img class="receiptimg" id="mn_img" src="${cv.toDataURL("image/png")}" alt="Price menu">
+    <button class="primary" id="mn_share"><svg viewBox="0 0 24 24"><path d="M12 15V3M7 8l5-5 5 5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>Share menu</button>
+    <div class="btnrow"><button class="ghostbtn" id="mn_save">Save image</button><button class="ghostbtn" id="mn_biz">Name &amp; logo</button></div>
+    <div class="group" style="margin-top:18px"><h4>What's on it</h4>
+      <label class="toggle"><span>Show slice prices<small>Whole price ÷ slices, rounded up to 25¢</small></span><button class="switch ${m.slices?"on":""}" id="mn_sl" role="switch"></button></label>
+      <label class="field"><span>Note at the bottom <small>(optional)</small></span><input id="mn_note" value="${esc(m.note)}" placeholder="e.g. Order 3 days ahead · Delivery in Ponce"></label>
+      <p class="small" style="margin:0 0 8px">Tap a cake to show or hide it. Prices start at your selling price, rounded up to the dollar; type your own to change them.</p>
+      <div class="pickl" id="mn_list"></div></div>`, (b, close) => {
+    let t = null;
+    const save = () => store.set("menu", m);
+    const redraw = () => { clearTimeout(t); t = setTimeout(async () => { cv = await drawMenu(m); const im = b.querySelector("#mn_img"); if (im) im.src = cv.toDataURL("image/png"); }, 250); };
+    const paintList = () => {
+      b.querySelector("#mn_list").innerHTML = menuIds().map(id => { const r = db.recipes[id], on = !m.off[id], auto = pricing(r).price;
+        return `<div class="pickrow menurow ${on?"on":""}" data-id="${esc(id)}">
+          <button class="pickhit" aria-label="Show or hide ${esc(r.name)}"><span class="pickbox" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
+          <span class="picktxt"><b>${esc(r.name)}</b><small>${auto > 0 ? `Selling price ${money(auto)}` : "No price yet: add ingredient prices"}</small></span></button>
+          <label class="mnprice"><span>$</span><input inputmode="decimal" data-p="${esc(id)}" value="${num(m.price[id]) > 0 ? r2(m.price[id]) : ""}" placeholder="${auto > 0 ? Math.ceil(auto) : "0"}" aria-label="Menu price for ${esc(r.name)}"></label></div>`; }).join("");
+      b.querySelectorAll(".pickhit").forEach(h => h.onclick = () => { const id = h.parentElement.dataset.id; if (m.off[id]) delete m.off[id]; else m.off[id] = true; save(); h.parentElement.classList.toggle("on", !m.off[id]); redraw(); });
+      b.querySelectorAll("[data-p]").forEach(inp => inp.oninput = () => { const v = num(inp.value); if (v > 0) m.price[inp.dataset.p] = v; else delete m.price[inp.dataset.p]; save(); redraw(); });
+    };
+    paintList();
+    b.querySelector("#mn_sl").onclick = e => { m.slices = !m.slices; e.currentTarget.classList.toggle("on", m.slices); save(); redraw(); };
+    b.querySelector("#mn_note").oninput = e => { m.note = e.target.value; save(); redraw(); };
+    const fname = () => `${(BIZ().name || "CakeCart").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9]+/g, "-")}-${rlang() === "es" ? "Menu-ES" : "Menu"}.png`;
+    b.querySelector("#mn_share").onclick = () => shareImage(cv, fname(), rlang() === "es" ? "Menú" : "Menu");
+    b.querySelector("#mn_save").onclick = () => shareImage(cv, fname(), "Save menu", true);
+    b.querySelector("#mn_biz").onclick = () => editBusiness(() => { close(); setTimeout(openMenu, 250); });
+    hookLang(b, () => { close(); setTimeout(openMenu, 250); });
   }, {tall:true});
 }
 function editBusiness(done){
@@ -1018,6 +1171,7 @@ function editBusiness(done){
     <label class="field"><span>Business name</span><input id="bz_name" value="${esc(biz.name)}" placeholder="CakeCart"></label>
     <label class="field"><span>Contact <small>(phone, Instagram… optional)</small></span><input id="bz_contact" value="${esc(biz.contact)}" placeholder="e.g. 787-555-0123 · @mycheesecakes"></label>
     <label class="field"><span>Thank-you line</span><input id="bz_thanks" value="${esc(biz.thanks)}" placeholder="Thank you for your order!"></label>
+    <label class="field"><span>Thank-you line in Spanish</span><input id="bz_thankses" value="${esc(biz.thanksEs||"")}" placeholder="¡Gracias por su orden!"></label>
     <button class="primary" id="bz_save">Save</button>`, (b, close) => {
     let logo = biz.logo || "";
     const paint = () => {
@@ -1033,7 +1187,7 @@ function editBusiness(done){
     b.querySelector("#bz_rmlogo").onclick = () => { logo = ""; paint(); };
     b.querySelector("#bz_save").onclick = () => {
       if (logo) biz.logo = logo; else delete biz.logo;
-      biz.name = b.querySelector("#bz_name").value.trim(); biz.contact = b.querySelector("#bz_contact").value.trim(); biz.thanks = b.querySelector("#bz_thanks").value.trim();
+      biz.name = b.querySelector("#bz_name").value.trim(); biz.contact = b.querySelector("#bz_contact").value.trim(); biz.thanks = b.querySelector("#bz_thanks").value.trim(); biz.thanksEs = b.querySelector("#bz_thankses").value.trim();
       saveDb(); close(); toast("Saved"); if (done) done();
     };
   });
@@ -1141,6 +1295,7 @@ $("#iq").oninput = e => { iquery = e.target.value; renderIngredients(); };
 $("#newRecipe").onclick = () => editRecipeDetails(null);
 $("#newIng").onclick = () => editIngredient(null);
 $("#newOrder").onclick = () => editOrder(null);
+$("#openMenu").onclick = () => openMenu();
 $("#moneyToggle").onclick = () => { hideMoney = !hideMoney; store.set("hideMoney", hideMoney); renderOrders();
   toast(hideMoney ? "Amounts hidden" : "Amounts showing"); };
 $("#clearHave").onclick = () => {

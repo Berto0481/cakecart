@@ -368,3 +368,19 @@ button.cake{width:100%;text-align:left;font:inherit;color:inherit}
 .logobtns{display:flex;flex-direction:column;gap:8px;flex:1}
 .logobtns .ghostbtn{margin:0;width:100%}
 .bkclock{margin-top:10px;width:100%}
+
+.langseg{margin-bottom:12px}
+.shopquick{margin-bottom:12px}
+.pickl{display:flex;flex-direction:column;gap:8px;margin-bottom:14px}
+.pickrow{display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:#fff;border:1px solid var(--line);border-radius:16px;padding:12px 14px;font:inherit;color:inherit}
+.pickbox{width:26px;height:26px;flex:none;border-radius:50%;border:2px solid #D9C4C9;display:flex;align-items:center;justify-content:center}
+.pickbox svg{width:16px;height:16px;fill:none;stroke:#fff;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;opacity:0}
+.pickrow.on .pickbox{background:var(--green);border-color:var(--green)}
+.pickrow.on .pickbox svg{opacity:1}
+.picktxt{flex:1;min-width:0;display:flex;flex-direction:column}
+.picktxt small{color:var(--soft);font-size:13px;margin-top:2px}
+.menurow{padding:6px 8px 6px 4px}
+.pickhit{flex:1;min-width:0;display:flex;align-items:center;gap:12px;background:none;border:0;padding:8px 6px;font:inherit;color:inherit;text-align:left}
+.menurow:not(.on) .picktxt{opacity:.55}
+.mnprice{display:flex;align-items:center;gap:2px;background:var(--cream);border:1px solid var(--line);border-radius:12px;padding:0 10px;height:44px;font-weight:800}
+.mnprice input{width:56px;border:0;background:none;font:inherit;font-size:16px;color:var(--ink);outline:none}
