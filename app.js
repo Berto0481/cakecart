@@ -873,9 +873,30 @@ function wrap(ctx, text, maxW){
   for (const w of words) { const t = line ? line + " " + w : w; if (ctx.measureText(t).width > maxW && line) { lines.push(line); line = w; } else line = t; }
   if (line) lines.push(line); return lines;
 }
+let bizLogoSrc = null, bizLogoImg = null;
+function loadBizLogo(){
+  const src = BIZ().logo; if (!src) return Promise.resolve(null);
+  if (src === bizLogoSrc && bizLogoImg) return Promise.resolve(bizLogoImg);
+  return new Promise(res => { const im = new Image(); im.onload = () => { bizLogoSrc = src; res(bizLogoImg = im); }; im.onerror = () => res(null); im.src = src; });
+}
+// Shrink an uploaded picture so it fits comfortably in on-phone storage
+function shrinkLogo(file){
+  return new Promise((res, rej) => {
+    const url = URL.createObjectURL(file), im = new Image();
+    im.onload = () => {
+      const max = 720, k = Math.min(1, max / Math.max(im.width, im.height));
+      const c = document.createElement("canvas"); c.width = Math.round(im.width * k); c.height = Math.round(im.height * k);
+      c.getContext("2d").drawImage(im, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
+      let out = c.toDataURL("image/webp", 0.9); if (!out.startsWith("data:image/webp")) out = c.toDataURL("image/png");
+      res(out);
+    };
+    im.onerror = () => { URL.revokeObjectURL(url); rej(new Error("That file isn’t a picture this phone can open.")); };
+    im.src = url;
+  });
+}
 async function drawReceipt(o){
   try { await Promise.all(["400","700","800"].map(w => document.fonts.load(`${w} 40px Nunito`))); } catch(e) {}
-  const logo = await loadLogo(), biz = BIZ();
+  const biz = BIZ(), bizLogo = await loadBizLogo(), logo = bizLogo ? null : await loadLogo();
   const W = 1080, P = 72, IN = 64, F = "Nunito, system-ui, sans-serif";
   const C = {bg:"#FBF5EB", card:"#FFFFFF", ink:"#2A1A20", muted:"#8C7A80", line:"#F0E4E2", wine:"#8E1B3A", berry:"#C8324F", green:"#2E7D4F", greenbg:"#E3F2E8", amber:"#8A5A00", amberbg:"#FFF1D6"};
   const total = orderTotal(o);
@@ -883,12 +904,20 @@ async function drawReceipt(o){
     let y = P + IN; const L = P + IN, R = W - P - IN, cw = R - L;
     const txt = (s, x, yy, font, color, align = "left") => { if (!draw) return; ctx.font = font; ctx.fillStyle = color; ctx.textAlign = align; ctx.fillText(s, x, yy); };
     const rule = yy => { if (draw) { ctx.fillStyle = C.line; ctx.fillRect(L, yy, cw, 3); } };
-    // header
+    // header: the business's own logo, centered, if one was uploaded on this phone
+    if (bizLogo) {
+      const k = Math.min(380 / bizLogo.width, 380 / bizLogo.height), lw = bizLogo.width * k, lh = bizLogo.height * k;
+      if (draw) ctx.drawImage(bizLogo, W/2 - lw/2, y - 20, lw, lh);
+      y += lh - 20;
+      if (biz.contact) { y += 46; txt(biz.contact, W/2, y, `600 30px ${F}`, C.muted, "center"); }
+      y += 50; rule(y); y += 70;
+    } else {
     if (draw && logo) { ctx.save(); ctx.beginPath(); ctx.roundRect(L, y, 120, 120, 28); ctx.clip(); ctx.drawImage(logo, L, y, 120, 120); ctx.restore(); }
     ctx.font = `800 52px ${F}`; const name = biz.name || "CakeCart";
     txt(name, L + 148, y + 62, `800 52px ${F}`, C.wine);
     if (biz.contact) txt(biz.contact, L + 148, y + 106, `600 30px ${F}`, C.muted);
     y += 170; rule(y); y += 70;
+    }
     txt("Order confirmation", L, y, `800 46px ${F}`, C.ink);
     txt(`#${String(o.num || "").padStart(4, "0")}`, R, y, `800 34px ${F}`, C.berry, "right");
     y += 64;
@@ -943,7 +972,7 @@ async function openReceipt(oid){
   openSheet("Receipt", `
     <img class="receiptimg" src="${url}" alt="Order receipt">
     <button class="primary" id="r_share"><svg viewBox="0 0 24 24"><path d="M12 15V3M7 8l5-5 5 5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>Send to customer</button>
-    <div class="btnrow"><button class="ghostbtn" id="r_save">Save image</button><button class="ghostbtn" id="r_biz">Business name on receipt</button></div>
+    <div class="btnrow"><button class="ghostbtn" id="r_save">Save image</button><button class="ghostbtn" id="r_biz">Name &amp; logo</button></div>
     <p class="small">Shows the cakes, prices, date and whether it's paid. Your costs and profit are never on it.</p>`, (b, close) => {
     const blob = () => new Promise(res => cv.toBlob(res, "image/png"));
     const saveImg = async () => { const bl = await blob(), a = document.createElement("a"); a.href = URL.createObjectURL(bl); a.download = fname; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); };
@@ -960,12 +989,29 @@ async function openReceipt(oid){
 function editBusiness(done){
   const biz = BIZ();
   openSheet("Your business", `
-    <p class="small" style="margin:0 0 12px">Shown at the top and bottom of customer receipts.</p>
+    <p class="small" style="margin:0 0 12px">Shown at the top and bottom of customer receipts. Saved only on this phone.</p>
+    <div class="field"><span>Logo <small>(optional, replaces the name at the top)</small></span>
+      <div class="logorow"><div class="logoprev" id="bz_prev"></div>
+        <div class="logobtns"><label class="ghostbtn filebtn">Choose logo…<input type="file" id="bz_logo" accept="image/*"></label>
+        <button class="ghostbtn danger" id="bz_rmlogo">Remove</button></div></div></div>
     <label class="field"><span>Business name</span><input id="bz_name" value="${esc(biz.name)}" placeholder="CakeCart"></label>
     <label class="field"><span>Contact <small>(phone, Instagram… optional)</small></span><input id="bz_contact" value="${esc(biz.contact)}" placeholder="e.g. 787-555-0123 · @mycheesecakes"></label>
     <label class="field"><span>Thank-you line</span><input id="bz_thanks" value="${esc(biz.thanks)}" placeholder="Thank you for your order!"></label>
     <button class="primary" id="bz_save">Save</button>`, (b, close) => {
+    let logo = biz.logo || "";
+    const paint = () => {
+      b.querySelector("#bz_prev").innerHTML = logo ? `<img src="${logo}" alt="Your logo">` : `<span>No logo</span>`;
+      b.querySelector("#bz_rmlogo").style.display = logo ? "" : "none";
+    };
+    paint();
+    b.querySelector("#bz_logo").onchange = async e => {
+      const f = e.target.files[0]; if (!f) return;
+      try { logo = await shrinkLogo(f); paint(); } catch(err) { toast(err.message); }
+      e.target.value = "";
+    };
+    b.querySelector("#bz_rmlogo").onclick = () => { logo = ""; paint(); };
     b.querySelector("#bz_save").onclick = () => {
+      if (logo) biz.logo = logo; else delete biz.logo;
       biz.name = b.querySelector("#bz_name").value.trim(); biz.contact = b.querySelector("#bz_contact").value.trim(); biz.thanks = b.querySelector("#bz_thanks").value.trim();
       saveDb(); close(); toast("Saved"); if (done) done();
     };
@@ -979,14 +1025,14 @@ function openSettings(){
   const nR = Object.values(db.recipes).length, nI = Object.values(db.ingredients).filter(i=>!i.madeFrom).length;
   openSheet("Settings & backup", `
     <div class="card note2"><b>Your data lives on this phone.</b> ${nR} recipes and ${nI} ingredients. Make a backup now and then, and before switching phones.<br><span class="small" style="margin:0">${last ? `Last backup: ${new Date(last).toLocaleDateString()}` : "No backup made yet."}</span></div>
-    <button class="ghostbtn" id="b_biz" style="width:100%;margin-bottom:14px">Your business name for receipts${BIZ().name?`: ${esc(BIZ().name)}`:""}</button>
+    <button class="ghostbtn" id="b_biz" style="width:100%;margin-bottom:14px">Your business name &amp; logo for receipts${BIZ().name?`: ${esc(BIZ().name)}`:""}</button>
     <button class="primary" id="b_save"><svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Save a backup file</button>
     <p class="small">Keep the file somewhere safe, like Google Drive or your email. To move your data to another phone, open CakeCart there and use Restore.</p>
     <div class="group"><h4>Restore from a backup</h4>
       <p class="small" style="margin:0 0 10px">Replaces the recipes, prices, orders and pantry on this phone with the ones in the file.</p>
       <label class="ghostbtn filebtn">Choose backup file…<input type="file" id="b_file" accept=".json,application/json"></label></div>
     <div class="group"><h4>Start over</h4>
-      <p class="small" style="margin:0 0 10px">Puts back the original recipes and prices from the spreadsheet. Your orders are kept; other changes are lost unless you made a backup.</p>
+      <p class="small" style="margin:0 0 10px">Puts back the original recipes and prices from the spreadsheet. Your orders and business details are kept; other changes are lost unless you made a backup.</p>
       <button class="ghostbtn danger" id="b_reset">Reset to original data</button></div>`, (b, close) => {
     b.querySelector("#b_biz").onclick = () => { close(); setTimeout(() => editBusiness(), 250); };
     b.querySelector("#b_save").onclick = async () => {
@@ -1011,7 +1057,7 @@ function openSettings(){
       rd.readAsText(f);
     };
     confirmTap(b.querySelector("#b_reset"), "Tap again to reset everything", () => {
-      const keepOrders = db.orders || []; db = clone(DEFAULTS); db.deleted = {recipes:[], ingredients:[]}; db.orders = keepOrders; saveDb(); cleanQty(); saveState(); close(); refreshAll(); toast("Back to the original data"); });
+      const keepOrders = db.orders || [], keepBiz = db.business; db = clone(DEFAULTS); if (keepBiz) db.business = keepBiz; db.deleted = {recipes:[], ingredients:[]}; db.orders = keepOrders; saveDb(); cleanQty(); saveState(); close(); refreshAll(); toast("Back to the original data"); });
   });
 }
 

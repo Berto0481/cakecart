@@ -360,3 +360,10 @@ button.cake{width:100%;text-align:left;font:inherit;color:inherit}
 .seg2{display:flex;gap:8px}
 .seg2 .chip{flex:1;text-align:center;padding:11px 6px;font-size:15px}
 .omethod{color:var(--muted);font-weight:700}
+
+.logorow{display:flex;gap:12px;align-items:center}
+.logoprev{width:84px;height:84px;flex:none;border-radius:16px;border:1px solid var(--line);background:var(--cream);display:flex;align-items:center;justify-content:center;overflow:hidden}
+.logoprev img{width:100%;height:100%;object-fit:contain}
+.logoprev span{font-size:12px;font-weight:700;color:var(--soft)}
+.logobtns{display:flex;flex-direction:column;gap:8px;flex:1}
+.logobtns .ghostbtn{margin:0;width:100%}
