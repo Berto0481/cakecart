@@ -2,7 +2,23 @@ name: Android app
 
 on:
   push:
-    branches: [android]
+    branches: [main]
+    # Only rebuild the app when something that goes into it changes
+    paths:
+      - "index.html"
+      - "app.js"
+      - "app.css"
+      - "native.js"
+      - "defaults.js"
+      - "manifest.webmanifest"
+      - "icons/**"
+      - "fonts/**"
+      - "android/**"
+      - "capacitor.config.json"
+      - "package.json"
+      - "package-lock.json"
+      - "scripts/**"
+      - ".github/workflows/android.yml"
   workflow_dispatch:
 
 permissions:
@@ -44,8 +60,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cp android/app/build/outputs/apk/release/app-release.apk CakeCart.apk
-          TAG=android-test
+          TAG=android
           gh release delete "$TAG" --yes --cleanup-tag || true
-          gh release create "$TAG" CakeCart.apk --prerelease --target "$GITHUB_SHA" \
-            --title "CakeCart for Android (test build ${{ github.run_number }})" \
-            --notes "Test build of the Android app. Download CakeCart.apk on your phone and open it to install."
+          gh release create "$TAG" CakeCart.apk --latest --target "$GITHUB_SHA" \
+            --title "CakeCart for Android (build ${{ github.run_number }})" \
+            --notes "Download CakeCart.apk on your Android phone and open it to install. It updates over the existing app and keeps your data."
