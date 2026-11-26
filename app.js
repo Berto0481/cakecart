@@ -986,7 +986,7 @@ async function openReceipt(oid){
       try { const file = new File([await blob()], fname, {type:"image/png"});
         if (navigator.canShare && navigator.canShare({files:[file]})) await navigator.share({files:[file], title:"Order confirmation"});
         else { await saveImg(); toast("Image saved. Attach it in your messaging app."); }
-      } catch(e) { if (e && e.name !== "AbortError") toast("Couldn’t share: " + (e.message || e)); }
+      } catch(e) { if (e && e.name !== "AbortError") { await saveImg().catch(() => {}); toast("Image saved. Attach it in your messaging app."); } }
     };
     b.querySelector("#r_save").onclick = () => (IS_APP ? blob().then(bl => Native.shareFile(fname, bl, "Save receipt")) : saveImg()).catch(e => toast("Couldn’t save: " + (e.message || e)));
     b.querySelector("#r_biz").onclick = () => editBusiness(() => { close(); setTimeout(() => openReceipt(oid), 250); });
@@ -1041,7 +1041,7 @@ function openSettings(){
       <p class="small" style="margin:8px 0 0">Samsung phones can delay alerts to save battery. Tap <b>Make alerts reliable</b>, then <b>Battery</b>, and choose <b>Unrestricted</b>. Baking timers ring even when the app is closed.</p></div>` : ""}
     <div class="group"><h4>Restore from a backup</h4>
       <p class="small" style="margin:0 0 10px">Replaces the recipes, prices, orders and pantry on this phone with the ones in the file.</p>
-      <label class="ghostbtn filebtn">Choose backup file…<input type="file" id="b_file" accept=".json,application/json"></label></div>
+      <label class="ghostbtn filebtn">Choose backup file…<input type="file" id="b_file"></label></div>
     <div class="group"><h4>Start over</h4>
       <p class="small" style="margin:0 0 10px">Puts back the original recipes and prices from the spreadsheet. Your orders and business details are kept; other changes are lost unless you made a backup.</p>
       <button class="ghostbtn danger" id="b_reset">Reset to original data</button></div>`, (b, close) => {
@@ -1063,9 +1063,14 @@ function openSettings(){
       }
       try {
         const file = new File([blob], name, {type:"application/json"});
-        if (navigator.canShare && navigator.canShare({files:[file]})) { await navigator.share({files:[file], title:"CakeCart backup"}); }
-        else { const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); }
-        store.set("lastBackup", Date.now()); toast("Backup saved"); close();
+        // Some phones (Chrome on Android) refuse to share this kind of file; then save it to Downloads instead.
+        let shared = false;
+        if (navigator.canShare && navigator.canShare({files:[file]})) {
+          try { await navigator.share({files:[file], title:"CakeCart backup"}); shared = true; }
+          catch(e) { if (e && e.name === "AbortError") return; }
+        }
+        if (!shared) { const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); }
+        store.set("lastBackup", Date.now()); toast(shared ? "Backup saved" : "Backup saved to your Downloads folder"); close();
       } catch(e) { if (e && e.name !== "AbortError") toast("Couldn’t save the backup: " + (e.message || e)); }
     };
     b.querySelector("#b_file").onchange = e => {
