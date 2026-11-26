@@ -1,0 +1,17 @@
+{
+  "appId": "com.berto.cakecart",
+  "appName": "CakeCart",
+  "webDir": "www",
+  "android": {
+    "backgroundColor": "#FBF5EB"
+  },
+  "plugins": {
+    "LocalNotifications": {
+      "smallIcon": "ic_stat_cake",
+      "iconColor": "#8E1B3A"
+    },
+    "SystemBars": {
+      "style": "LIGHT"
+    }
+  }
+}
