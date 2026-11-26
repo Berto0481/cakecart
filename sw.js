@@ -1,7 +1,7 @@
 // CakeCart offline support.
 // Online: always fetch the newest files (so updates arrive complete). Offline: use the saved copy.
 // Bump VERSION whenever the app changes.
-const VERSION = "cakecart-v16";
+const VERSION = "cakecart-v17";
 const FILES = [
   "./", "index.html", "app.css", "app.js", "defaults.js", "manifest.webmanifest",
   "icons/icon-192.png", "icons/icon-512.png", "icons/maskable-192.png", "icons/maskable-512.png",
