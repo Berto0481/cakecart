@@ -752,10 +752,10 @@ function editOrder(oid){
       if (!o.created) o.created = todayStr();
       const list = ORDERS(); if (!o.num) o.num = nextOrderNum();
       const k = list.findIndex(x => x.id === o.id); if (k >= 0) list[k] = o; else list.push(o); saveDb(); return true; };
-    b.querySelector("#o_save").onclick = () => { if (save()) { close(); toast(isNew ? "Order saved" : "Saved"); } };
+    b.querySelector("#o_save").onclick = () => { if (save()) { close(); syncReminders(); toast(isNew ? "Order saved" : "Saved"); } };
     b.querySelector("#o_shop").onclick = () => { if (save()) { close(); shopForOrders([o]); } };
     b.querySelector("#o_rcpt").onclick = () => { if (save()) openReceipt(o.id); };
-    const d = b.querySelector("#o_del"); if (d) confirmTap(d, "Tap again to delete", () => { db.orders = ORDERS().filter(x => x.id !== o.id); saveDb(); close(); toast("Order deleted"); });
+    const d = b.querySelector("#o_del"); if (d) confirmTap(d, "Tap again to delete", () => { db.orders = ORDERS().filter(x => x.id !== o.id); saveDb(); close(); syncReminders(); toast("Order deleted"); });
   }
 }
 function updateOrderBadge(){
@@ -791,7 +791,7 @@ function editSteps(id, done){
 // Timers keep running while you move between steps, and survive closing the app.
 let timers = store.get("timers", []), tickT = null, wakeLock = null, alarmT = null;
 const saveTimers = () => store.set("timers", timers);
-function addTimer(label, min){ timers.push({id:newId("t"), label, end: Date.now() + min*60000, min}); saveTimers(); tick(); }
+function addTimer(label, min){ const t = {id:newId("t"), label, end: Date.now() + min*60000, min}; timers.push(t); saveTimers(); Native.timerStarted(t); tick(); }
 const left = t => Math.max(0, Math.round((t.end - Date.now())/1000));
 const clock = s => { const h = Math.floor(s/3600), m = Math.floor(s%3600/60), x = s%60; return (h?h+":"+String(m).padStart(2,"0"):m)+":"+String(x).padStart(2,"0"); };
 function beep(){
@@ -813,12 +813,12 @@ function showAlarm(t){
   el.classList.add("show");
   const ring = () => { beep(); try { navigator.vibrate && navigator.vibrate([300,150,300]); } catch(e){} };
   ring(); clearInterval(alarmT); alarmT = setInterval(ring, 2500);
-  $("#alarmOk").onclick = () => { clearInterval(alarmT); el.classList.remove("show"); timers = timers.filter(x => x.id !== t.id); saveTimers(); renderTimers(); };
+  $("#alarmOk").onclick = () => { clearInterval(alarmT); el.classList.remove("show"); Native.timerGone(t); timers = timers.filter(x => x.id !== t.id); saveTimers(); renderTimers(); };
 }
 function renderTimers(){
   const bar = $("#bakeTimers"); if (!bar) return;
   bar.innerHTML = timers.map(t => `<button class="tchip ${left(t)?"":"done"}" data-timer="${t.id}"><svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/></svg><span>${esc(t.label)}</span><b>${left(t)?clock(left(t)):"Done!"}</b><i>×</i></button>`).join("");
-  bar.querySelectorAll(".tchip").forEach(c => c.onclick = () => { timers = timers.filter(x => x.id !== c.dataset.timer); saveTimers(); renderTimers(); });
+  bar.querySelectorAll(".tchip").forEach(c => c.onclick = () => { const t = timers.find(x => x.id === c.dataset.timer); if (t) Native.timerGone(t); timers = timers.filter(x => x.id !== c.dataset.timer); saveTimers(); renderTimers(); });
   bar.style.display = timers.length ? "" : "none"; tick();
 }
 async function keepAwake(on){
@@ -845,7 +845,7 @@ function startBaking(id){
         ${showIng ? `<div class="card bkings">${r.sections.map((sec, si) => `<div class="bksec">${esc(sec.title)}</div>` + sec.items.map((it, ii) => { const k = si+"-"+ii;
             return `<button class="bking ${got[k]?"got":""}" data-k="${k}"><span class="box"><svg viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg></span><span><b>${esc(ingName(it.ing))}</b> ${esc(it.note || fmtAmt(it.ing, it.amt))}</span></button>`; }).join("")).join("")}</div>` : ""}
         <div class="bkstep"><span class="bknum">${i+1}</span><p>${esc(s.t)}</p>
-          ${s.min ? `<button class="primary bktimer" id="bkTimer"><svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2M9 2h6"/></svg>Start ${fmtMin(s.min)} timer</button>` : ""}
+          ${s.min ? `<button class="primary bktimer" id="bkTimer"><svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2M9 2h6"/></svg>Start ${fmtMin(s.min)} timer</button>${IS_APP ? `<button class="ghostbtn bkclock" id="bkClock">Set in phone's Clock instead</button>` : ""}` : ""}
         </div>
       </div>
       <footer class="bakefoot"><button class="ghostbtn" id="bkPrev" ${i?"":"disabled"}>Back</button><button class="primary" id="bkNext">${last?"Finish":"Next step"}</button></footer>`;
@@ -854,6 +854,7 @@ function startBaking(id){
     el.querySelectorAll(".bking").forEach(b => b.onclick = () => { got[b.dataset.k] = !got[b.dataset.k]; b.classList.toggle("got", got[b.dataset.k]); });
     el.querySelector("#bkPrev").onclick = () => { if (i) { i--; store.set("bake-"+id, i); render(); } };
     el.querySelector("#bkNext").onclick = () => { if (last) { store.set("bake-"+id, 0); close(); toast(`${r.name}: all steps done`); } else { i++; store.set("bake-"+id, i); render(); el.querySelector(".bakebody").scrollTop = 0; } };
+    const cb = el.querySelector("#bkClock"); if (cb) cb.onclick = async () => { const ok = await Native.clockTimer(`${short(r)} · step ${i+1}`, s.min); toast(ok ? `${fmtMin(s.min)} timer set in Clock` : "Couldn’t open the Clock app"); };
     const tb = el.querySelector("#bkTimer"); if (tb) tb.onclick = () => { addTimer(`${short(r)} · step ${i+1}`, s.min); renderTimers(); toast(`${fmtMin(s.min)} timer started`); };
     renderTimers();
   }
@@ -861,6 +862,10 @@ function startBaking(id){
 }
 if (timers.length) tick();
 
+
+// Android app: keep order reminders in step with the orders (does nothing on the web)
+function remindSettings(){ return store.get("reminders", {on:true, time:"19:00"}); }
+function syncReminders(){ if (IS_APP) Native.syncOrders(ORDERS(), remindSettings()); }
 
 // ---------- RECEIPTS ----------
 const BIZ = () => (db.business = db.business || {name:"", contact:"", thanks:""});
@@ -977,12 +982,13 @@ async function openReceipt(oid){
     const blob = () => new Promise(res => cv.toBlob(res, "image/png"));
     const saveImg = async () => { const bl = await blob(), a = document.createElement("a"); a.href = URL.createObjectURL(bl); a.download = fname; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); };
     b.querySelector("#r_share").onclick = async () => {
+      if (IS_APP) { try { await Native.shareFile(fname, await blob(), "Order confirmation"); } catch(e) { if (!/cancel/i.test(e && e.message || "")) toast("Couldn’t share: " + (e.message || e)); } return; }
       try { const file = new File([await blob()], fname, {type:"image/png"});
         if (navigator.canShare && navigator.canShare({files:[file]})) await navigator.share({files:[file], title:"Order confirmation"});
         else { await saveImg(); toast("Image saved. Attach it in your messaging app."); }
       } catch(e) { if (e && e.name !== "AbortError") toast("Couldn’t share: " + (e.message || e)); }
     };
-    b.querySelector("#r_save").onclick = () => saveImg().catch(e => toast("Couldn’t save: " + (e.message || e)));
+    b.querySelector("#r_save").onclick = () => (IS_APP ? blob().then(bl => Native.shareFile(fname, bl, "Save receipt")) : saveImg()).catch(e => toast("Couldn’t save: " + (e.message || e)));
     b.querySelector("#r_biz").onclick = () => editBusiness(() => { close(); setTimeout(() => openReceipt(oid), 250); });
   }, {tall:true});
 }
@@ -1028,6 +1034,11 @@ function openSettings(){
     <button class="ghostbtn" id="b_biz" style="width:100%;margin-bottom:14px">Your business name &amp; logo for receipts${BIZ().name?`: ${esc(BIZ().name)}`:""}</button>
     <button class="primary" id="b_save"><svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Save a backup file</button>
     <p class="small">Keep the file somewhere safe, like Google Drive or your email. To move your data to another phone, open CakeCart there and use Restore.</p>
+    ${IS_APP ? `<div class="group"><h4>Reminders &amp; alerts</h4>
+      <label class="toggle"><span>Remind me about orders<small>The evening before a cake is due</small></span><button class="switch ${remindSettings().on?"on":""}" id="rm_on" role="switch"></button></label>
+      <label class="field"><span>Reminder time</span><input type="time" id="rm_time" value="${esc(remindSettings().time)}"></label>
+      <div class="btnrow"><button class="ghostbtn" id="rm_test">Send a test</button><button class="ghostbtn" id="rm_batt">Make alerts reliable</button></div>
+      <p class="small" style="margin:8px 0 0">Samsung phones can delay alerts to save battery. Tap <b>Make alerts reliable</b>, then <b>Battery</b>, and choose <b>Unrestricted</b>. Baking timers ring even when the app is closed.</p></div>` : ""}
     <div class="group"><h4>Restore from a backup</h4>
       <p class="small" style="margin:0 0 10px">Replaces the recipes, prices, orders and pantry on this phone with the ones in the file.</p>
       <label class="ghostbtn filebtn">Choose backup file…<input type="file" id="b_file" accept=".json,application/json"></label></div>
@@ -1035,9 +1046,21 @@ function openSettings(){
       <p class="small" style="margin:0 0 10px">Puts back the original recipes and prices from the spreadsheet. Your orders and business details are kept; other changes are lost unless you made a backup.</p>
       <button class="ghostbtn danger" id="b_reset">Reset to original data</button></div>`, (b, close) => {
     b.querySelector("#b_biz").onclick = () => { close(); setTimeout(() => editBusiness(), 250); };
+    if (IS_APP) {
+      const rs = remindSettings(), keep = () => { store.set("reminders", rs); syncReminders(); };
+      b.querySelector("#rm_on").onclick = async e => { rs.on = !rs.on; e.currentTarget.classList.toggle("on", rs.on); if (rs.on && !(await Native.allowed(true))) toast("Allow notifications for CakeCart in your phone settings"); keep(); };
+      b.querySelector("#rm_time").onchange = e => { rs.time = e.target.value || "19:00"; keep(); toast("Reminder time saved"); };
+      b.querySelector("#rm_test").onclick = async () => toast(await Native.test() ? "A test alert will arrive in 5 seconds" : "Notifications are off. Allow them in your phone settings.");
+      b.querySelector("#rm_batt").onclick = () => Native.openAppSettings();
+    }
     b.querySelector("#b_save").onclick = async () => {
       const name = `CakeCart-backup-${new Date().toISOString().slice(0,10)}.json`;
       const blob = new Blob([JSON.stringify(backupPayload(), null, 1)], {type:"application/json"});
+      if (IS_APP) {
+        try { await Native.shareFile(name, blob, "CakeCart backup"); store.set("lastBackup", Date.now()); Native.syncBackupReminder(Date.now()); toast("Backup ready. Save it to Drive or send it to yourself."); close(); }
+        catch(e) { if (!/cancel/i.test(e && e.message || "")) toast("Couldn’t save the backup: " + (e.message || e)); }
+        return;
+      }
       try {
         const file = new File([blob], name, {type:"application/json"});
         if (navigator.canShare && navigator.canShare({files:[file]})) { await navigator.share({files:[file], title:"CakeCart backup"}); }
@@ -1052,7 +1075,7 @@ function openSettings(){
           const data = JSON.parse(rd.result);
           if (data.app !== "CakeCart" || !data.db || !data.db.recipes || !data.db.ingredients) throw new Error("This isn’t a CakeCart backup file.");
           db = data.db; have = data.have || {}; checked = {}; mergeDefaults(); cleanQty(); saveDb(); saveState(); close(); refreshAll();
-          toast(`Restored ${Object.keys(db.recipes).length} recipes`);
+          syncReminders(); toast(`Restored ${Object.keys(db.recipes).length} recipes`);
         } catch(err) { toast(err.message || "Couldn’t read that file."); } };
       rd.readAsText(f);
     };
@@ -1100,7 +1123,8 @@ document.addEventListener("keydown", e => { if (e.key === "Escape" && sheetStack
 
 refreshAll();
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
-if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+if (IS_APP) { Native.hookBack(); Native.setup().then(() => { syncReminders(); Native.syncBackupReminder(store.get("lastBackup", null)); }); }
+if (!IS_APP && "serviceWorker" in navigator && location.protocol.startsWith("http")) {
   const hadController = !!navigator.serviceWorker.controller;
   let reloaded = false;
   navigator.serviceWorker.addEventListener("controllerchange", () => { if (hadController && !reloaded) { reloaded = true; location.reload(); } });

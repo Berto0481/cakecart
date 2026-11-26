@@ -1,0 +1,51 @@
+name: Android app
+
+on:
+  push:
+    branches: [android]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Install
+        run: npm ci
+      - name: Copy the web app into the Android project
+        run: ./scripts/build-www.sh && npx cap sync android
+      - name: Unlock the signing key
+        run: |
+          if [ -z "$CAKECART_KEY_PASSWORD" ]; then
+            echo "::error::Add the CAKECART_KEY_PASSWORD secret in Settings > Secrets and variables > Actions"; exit 1
+          fi
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -in android/cakecart.keystore.enc -out android/app/cakecart.keystore -pass env:CAKECART_KEY_PASSWORD
+        env:
+          CAKECART_KEY_PASSWORD: ${{ secrets.CAKECART_KEY_PASSWORD }}
+      - name: Build the APK
+        working-directory: android
+        run: ./gradlew assembleRelease --no-daemon
+        env:
+          CAKECART_KEY_PASSWORD: ${{ secrets.CAKECART_KEY_PASSWORD }}
+          BUILD_NUMBER: ${{ github.run_number }}
+      - name: Publish for download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk CakeCart.apk
+          TAG=android-test
+          gh release delete "$TAG" --yes --cleanup-tag || true
+          gh release create "$TAG" CakeCart.apk --prerelease --target "$GITHUB_SHA" \
+            --title "CakeCart for Android (test build ${{ github.run_number }})" \
+            --notes "Test build of the Android app. Download CakeCart.apk on your phone and open it to install."

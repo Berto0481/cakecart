@@ -1,9 +1,9 @@
 // CakeCart offline support.
 // Online: always fetch the newest files (so updates arrive complete). Offline: use the saved copy.
 // Bump VERSION whenever the app changes.
-const VERSION = "cakecart-v16";
+const VERSION = "cakecart-v17";
 const FILES = [
-  "./", "index.html", "app.css", "app.js", "defaults.js", "manifest.webmanifest",
+  "./", "index.html", "app.css", "app.js", "native.js", "defaults.js", "manifest.webmanifest",
   "icons/icon-192.png", "icons/icon-512.png", "icons/maskable-192.png", "icons/maskable-512.png",
   "icons/apple-touch-icon.png",
   "icons/cakes/apple-pie-slice.webp", "icons/cakes/blueberry-slice.webp", "icons/cakes/brownies-slice.webp", "icons/cakes/chocolate-slice.webp", "icons/cakes/cinnamon-roll-slice.webp", "icons/cakes/key-lime-slice.webp", "icons/cakes/new-york-slice.webp", "icons/cakes/oreo-slice.webp", "icons/cakes/peanut-butter-slice.webp", "icons/cakes/pumpkin-slice.webp", "icons/cakes/raspberry-slice.webp", "icons/cakes/regular-slice.webp", "icons/cakes/salted-caramel-slice.webp", "icons/cakes/strawberry-slice.webp", "icons/cakes/turtle-slice.webp",
