@@ -67,6 +67,16 @@ const Native = (() => {
       if (!IS_APP || !CLOCK()) return false;
       try { await CLOCK().setTimer({seconds: Math.round(min * 60), label}); return true; } catch(e) { return false; }
     },
+    // ---- updates: compare this app's build number with the newest one on GitHub ----
+    async appBuild(){ try { const i = await NP.App.getInfo(); return +i.build || 0; } catch(e) { return 0; } },
+    async latestBuild(){
+      try {
+        const r = await fetch("https://api.github.com/repos/Berto0481/cakecart/releases/tags/android", {cache: "no-store"});
+        if (!r.ok) return 0;
+        const m = /build (\d+)/.exec((await r.json()).name || ""); return m ? +m[1] : 0;
+      } catch(e) { return 0; }
+    },
+    openUrl(url){ if (IS_APP && CLOCK()) CLOCK().openUrl({url}).catch(() => {}); },
     openAppSettings(){ if (IS_APP && CLOCK()) CLOCK().openAppSettings().catch(() => {}); },
 
     // ---- order reminders: one notification per due day, the evening before ----
@@ -133,7 +143,7 @@ const Native = (() => {
         NP.App.minimizeApp();
       });
       // Coming back to the app: refresh reminders in case days have passed
-      NP.App.addListener("resume", () => { if (typeof syncReminders === "function") syncReminders(); });
+      NP.App.addListener("resume", () => { if (typeof syncReminders === "function") syncReminders(); if (typeof checkUpdate === "function") checkUpdate(false); });
     }
   };
 })();

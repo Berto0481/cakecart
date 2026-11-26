@@ -32,6 +32,20 @@ public class CakeClockPlugin extends Plugin {
         }
     }
 
+    /** Opens a link in the phone's browser (used for downloading app updates). */
+    @PluginMethod
+    public void openUrl(PluginCall call) {
+        String url = call.getString("url", "");
+        if (!url.startsWith("https://")) { call.reject("Only https links"); return; }
+        Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            getActivity().startActivity(i);
+            call.resolve();
+        } catch (ActivityNotFoundException e) {
+            call.reject("No browser found");
+        }
+    }
+
     @PluginMethod
     public void openAppSettings(PluginCall call) {
         Intent i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,

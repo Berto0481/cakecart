@@ -866,6 +866,21 @@ if (timers.length) tick();
 // Android app: keep order reminders in step with the orders (does nothing on the web)
 function remindSettings(){ return store.get("reminders", {on:true, time:"19:00"}); }
 function syncReminders(){ if (IS_APP) Native.syncOrders(ORDERS(), remindSettings()); }
+// Android app: tell me when a newer version is ready to download (checks GitHub at most every 6 hours)
+const APK_URL = "https://github.com/Berto0481/cakecart/releases/download/android/CakeCart.apk";
+async function checkUpdate(force){
+  if (!IS_APP) return null;
+  const mine = await Native.appBuild();
+  let latest = store.get("updLatest", 0);
+  if (force || Date.now() - store.get("updCheck", 0) > 6 * 36e5) {
+    const l = await Native.latestBuild(); if (l) { latest = l; store.set("updLatest", l); store.set("updCheck", Date.now()); }
+  }
+  const info = {mine, latest, has: !!mine && latest > mine};
+  if (info.has && !force && store.get("updToasted", 0) !== latest) {
+    store.set("updToasted", latest); toast(`App update ready (build ${latest})`, "Download", () => Native.openUrl(APK_URL));
+  }
+  return info;
+}
 
 // ---------- RECEIPTS ----------
 const BIZ = () => (db.business = db.business || {name:"", contact:"", thanks:""});
@@ -1034,6 +1049,7 @@ function openSettings(){
     <button class="ghostbtn" id="b_biz" style="width:100%;margin-bottom:14px">Your business name &amp; logo for receipts${BIZ().name?`: ${esc(BIZ().name)}`:""}</button>
     <button class="primary" id="b_save"><svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Save a backup file</button>
     <p class="small">Keep the file somewhere safe, like Google Drive or your email. To move your data to another phone, open CakeCart there and use Restore.</p>
+    ${IS_APP ? `<div class="group"><h4>App updates</h4><div id="upd"><p class="small" style="margin:0">Checking…</p></div></div>` : ""}
     ${IS_APP ? `<div class="group"><h4>Reminders &amp; alerts</h4>
       <label class="toggle"><span>Remind me about orders<small>The evening before a cake is due</small></span><button class="switch ${remindSettings().on?"on":""}" id="rm_on" role="switch"></button></label>
       <label class="field"><span>Reminder time</span><input type="time" id="rm_time" value="${esc(remindSettings().time)}"></label>
@@ -1052,6 +1068,16 @@ function openSettings(){
       b.querySelector("#rm_time").onchange = e => { rs.time = e.target.value || "19:00"; keep(); toast("Reminder time saved"); };
       b.querySelector("#rm_test").onclick = async () => toast(await Native.test() ? "A test alert will arrive in 5 seconds" : "Notifications are off. Allow them in your phone settings.");
       b.querySelector("#rm_batt").onclick = () => Native.openAppSettings();
+      const paintUpd = async force => {
+        const box = b.querySelector("#upd"); if (!box) return;
+        const u = await checkUpdate(force); if (!box.isConnected || !u) return;
+        box.innerHTML = u.has
+          ? `<p class="small" style="margin:0 0 10px">This app is build ${u.mine}. <b>Build ${u.latest} is ready.</b> It installs over this one and keeps your data.</p><button class="primary" id="upd_get">Download update</button>`
+          : `<p class="small" style="margin:0 0 10px">This app is build ${u.mine || "?"}. ${u.latest ? "You have the newest version." : "Couldn’t reach GitHub to check."}</p><button class="ghostbtn" id="upd_chk" style="width:100%">Check for updates</button>`;
+        const g = box.querySelector("#upd_get"); if (g) g.onclick = () => Native.openUrl(APK_URL);
+        const c = box.querySelector("#upd_chk"); if (c) c.onclick = () => { box.innerHTML = `<p class="small" style="margin:0">Checking…</p>`; paintUpd(true); };
+      };
+      paintUpd(false);
     }
     b.querySelector("#b_save").onclick = async () => {
       const name = `CakeCart-backup-${new Date().toISOString().slice(0,10)}.json`;
@@ -1128,7 +1154,7 @@ document.addEventListener("keydown", e => { if (e.key === "Escape" && sheetStack
 
 refreshAll();
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
-if (IS_APP) { Native.hookBack(); Native.setup().then(() => { syncReminders(); Native.syncBackupReminder(store.get("lastBackup", null)); }); }
+if (IS_APP) { Native.hookBack(); Native.setup().then(() => { syncReminders(); Native.syncBackupReminder(store.get("lastBackup", null)); }); setTimeout(() => checkUpdate(false), 2500); }
 if (!IS_APP && "serviceWorker" in navigator && location.protocol.startsWith("http")) {
   const hadController = !!navigator.serviceWorker.controller;
   let reloaded = false;
