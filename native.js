@@ -133,6 +133,15 @@ const Native = (() => {
       await SH().share({title, files: [w.uri], dialogTitle: title});
     },
 
+    async shareFiles(list, title){
+      const uris = [];
+      for (const f of list) {
+        const data = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(",")[1]); r.onerror = rej; r.readAsDataURL(f.blob); });
+        uris.push((await FS().writeFile({path: f.name, data, directory: "CACHE"})).uri);
+      }
+      await SH().share({title, files: uris, dialogTitle: title});
+    },
+
     // ---- Android back button: closes the top-most thing, then leaves the app ----
     hookBack(){
       if (!IS_APP || !NP.App) return;

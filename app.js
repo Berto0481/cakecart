@@ -124,6 +124,7 @@ function need(id, v){
 // ---------- cake thumbnails ----------
 const LOOKS = [["#FBF0DC","#FFF8EC","#F8E7B0","#C08548"],["#FCE4E6","#E0485F","#F8E7C8","#C08548","#E0485F"],["#F1E4DE","#4A2A1F","#7A4A35","#2B1B16"],["#ECE8F7","#4A3A8C","#F8E8C4","#C08548","#6A59B8"],["#EEF5DC","#C9E08A","#F3F0C4","#C08548","#7FB13A"],["#FBEAD6","#C77B30","#F6E2B3","#B9783F"]];
 function photoFor(id, kind){
+  const own = db.recipes[id] && db.recipes[id].photo; if (own) return own;   // your own photo always wins
   const p = (typeof PHOTOS !== "undefined" && PHOTOS[id]) || {};
   return kind === "hero" ? p.hero : (p.slice || p.whole);
 }
@@ -445,7 +446,23 @@ function editRecipeDetails(id, done){
     <label class="field"><span>Short description</span><input id="d_desc" value="${esc(v.desc||"")}" placeholder="Shown under the name"></label>
     <label class="field"><span>Type</span><select id="d_cat">${catOpts}</select></label>
     <div id="d_more"></div>
+    <div class="field" id="d_photoF"><span>Your photo <small>(a slice of your own cake, for the app and the menu)</small></span>
+      <div class="logorow"><div class="logoprev photoprev" id="d_pprev"></div>
+        <div class="logobtns"><label class="ghostbtn filebtn">Choose photo…<input type="file" id="d_photo" accept="image/*"></label>
+        <button class="ghostbtn danger" id="d_rmphoto">Remove</button></div></div></div>
     <button class="primary" id="d_save">${isNew?"Create recipe":"Save"}</button>`, (b, close) => {
+    let photo = (r && r.photo) || "";
+    const paintP = () => {
+      b.querySelector("#d_pprev").innerHTML = photo ? `<img src="${photo}" alt="Your photo">` : `<span>No photo</span>`;
+      b.querySelector("#d_rmphoto").style.display = photo ? "" : "none";
+      b.querySelector("#d_photoF").style.display = b.querySelector("#d_cat").value === "Homemade ingredient" ? "none" : "";
+    };
+    b.querySelector("#d_photo").onchange = async e => {
+      const f = e.target.files[0]; if (!f) return;
+      try { photo = await shrinkImage(f, 900, "image/jpeg", 0.82); paintP(); } catch(err) { toast(err.message); }
+      e.target.value = "";
+    };
+    b.querySelector("#d_rmphoto").onclick = () => { photo = ""; paintP(); };
     const more = () => {
       const sub = b.querySelector("#d_cat").value === "Homemade ingredient", pan = b.querySelector("#d_cat").value === "Brownies";
       b.querySelector("#d_more").innerHTML = sub
@@ -455,7 +472,7 @@ function editRecipeDetails(id, done){
         : `<div class="two"><label class="field"><span>Sold as</span><input id="d_size" value="${esc(v.size || (pan?"9×9 pan":"9\" cheesecake"))}"></label>
            <label class="field"><span>Cut into</span><input id="d_piece" value="${esc(v.piece || (pan?"brownie":"slice"))}"></label></div>`;
     };
-    b.querySelector("#d_cat").onchange = more; more();
+    b.querySelector("#d_cat").onchange = () => { more(); paintP(); }; more(); paintP();
     b.querySelector("#d_save").onclick = () => {
       const name = b.querySelector("#d_name").value.trim(); if (!name) { toast("Give it a name"); return; }
       const type = b.querySelector("#d_cat").value, sub = type === "Homemade ingredient";
@@ -474,7 +491,10 @@ function editRecipeDetails(id, done){
         rec.size = b.querySelector("#d_size").value.trim(); rec.piece = b.querySelector("#d_piece").value.trim() || "slice";
         if (rec.markup == null) rec.markup = 3; if (rec.pieces == null) rec.pieces = 12; if (rec.packaging == null) rec.packaging = 0;
       }
-      db.recipes[rid] = rec; saveDb(); close();
+      if (photo && !sub) rec.photo = photo; else delete rec.photo;
+      db.recipes[rid] = rec;
+      if (rec.photo && !store.set("db", db)) { delete rec.photo; saveDb(); toast("Your phone’s storage for CakeCart is full, so the photo wasn’t saved"); return; }
+      saveDb(); close(); refreshAll();
       if (isNew) setTimeout(() => openRecipe(rid), 250); else if (done) done();
     };
   });
@@ -949,14 +969,15 @@ function loadBizLogo(){
   return new Promise(res => { const im = new Image(); im.onload = () => { bizLogoSrc = src; res(bizLogoImg = im); }; im.onerror = () => res(null); im.src = src; });
 }
 // Shrink an uploaded picture so it fits comfortably in on-phone storage
-function shrinkLogo(file){
+function shrinkLogo(file){ return shrinkImage(file, 720, "image/webp", 0.9); }
+function shrinkImage(file, max, type, q){
   return new Promise((res, rej) => {
     const url = URL.createObjectURL(file), im = new Image();
     im.onload = () => {
-      const max = 720, k = Math.min(1, max / Math.max(im.width, im.height));
+      const k = Math.min(1, max / Math.max(im.width, im.height));
       const c = document.createElement("canvas"); c.width = Math.round(im.width * k); c.height = Math.round(im.height * k);
       c.getContext("2d").drawImage(im, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
-      let out = c.toDataURL("image/webp", 0.9); if (!out.startsWith("data:image/webp")) out = c.toDataURL("image/png");
+      let out = c.toDataURL(type, q); if (!out.startsWith("data:" + type)) out = c.toDataURL("image/png");
       res(out);
     };
     im.onerror = () => { URL.revokeObjectURL(url); rej(new Error("That file isn’t a picture this phone can open.")); };
@@ -1059,60 +1080,77 @@ async function openReceipt(oid){
   }, {tall:true});
 }
 // ---------- PRICE MENU (an image to post or send to customers) ----------
-const MENU = () => { const m = store.get("menu", {}); m.off = m.off || {}; m.price = m.price || {}; if (m.slices == null) m.slices = true; m.note = m.note || ""; return m; };
+const MENU = () => { const m = store.get("menu", {}); m.off = m.off || {}; m.price = m.price || {}; if (m.slicesV !== 2) { m.slices = false; m.slicesV = 2; } m.note = m.note || ""; if (m.samples == null) m.samples = true; m.per = m.per === 6 ? 6 : 4; return m; };
 const menuIds = () => cakeIds();
 const fmtP = v => Math.abs(v - Math.round(v)) < 0.005 ? `$${Math.round(v)}` : money(v);
 function menuPrice(id, m){ const p = num(m.price[id]); if (p > 0) return p; const c = pricing(db.recipes[id]).price; return c > 0 ? Math.ceil(c) : 0; }
 const slicePrice = (r, whole) => num(r.pieces) > 0 && whole > 0 ? Math.ceil(whole / num(r.pieces) * 4) / 4 : 0;
+const imgCache = {};
+function loadImg(src){ if (!src) return Promise.resolve(null); if (imgCache[src]) return imgCache[src];
+  return imgCache[src] = new Promise(res => { const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = src; }); }
+// The photo the menu uses: your own, or (only while testing) the app's sample photo
+function menuPhoto(id, m){ const own = db.recipes[id] && db.recipes[id].photo; if (own) return own; return m.samples ? photoFor(id, "slice") : null; }
+// Draws the menu as pages of photo cards (2 across), each page 1080 wide, ready for an Instagram/WhatsApp carousel
 async function drawMenu(m){
   try { await Promise.all(["600","700","800"].map(w => document.fonts.load(`${w} 40px Nunito`))); } catch(e) {}
-  const biz = BIZ(), bizLogo = await loadBizLogo(), logo = bizLogo ? null : await loadLogo(), Lg = rlang(), T = RT[Lg];
-  const W = 1080, P = 72, IN = 64, F = "Nunito, system-ui, sans-serif";
-  const C = {bg:"#FBF5EB", card:"#FFFFFF", ink:"#2A1A20", muted:"#8C7A80", line:"#F0E4E2", wine:"#8E1B3A", berry:"#C8324F"};
-  const rows = menuIds().filter(id => !m.off[id]).map(id => ({r: db.recipes[id], whole: menuPrice(id, m)})).filter(x => x.whole > 0);
-  function layout(ctx, draw){
-    let y = P + IN; const L = P + IN, R = W - P - IN, cw = R - L;
-    const txt = (s, x, yy, font, color, align = "left") => { if (!draw) return; ctx.font = font; ctx.fillStyle = color; ctx.textAlign = align; ctx.fillText(s, x, yy); };
-    const rule = yy => { if (draw) { ctx.fillStyle = C.line; ctx.fillRect(L, yy, cw, 3); } };
-    if (bizLogo) {
-      const k = Math.min(320 / bizLogo.width, 320 / bizLogo.height), lw = bizLogo.width * k, lh = bizLogo.height * k;
-      if (draw) ctx.drawImage(bizLogo, W/2 - lw/2, y - 20, lw, lh);
-      y += lh + 40;
-    } else {
-      if (draw && logo) { ctx.save(); ctx.beginPath(); ctx.roundRect(W/2 - 60, y, 120, 120, 28); ctx.clip(); ctx.drawImage(logo, W/2 - 60, y, 120, 120); ctx.restore(); }
-      y += 180; txt(biz.name || "CakeCart", W/2, y, `800 54px ${F}`, C.wine, "center"); y += 50;
-    }
-    txt(T.menu.toUpperCase(), W/2, y + 10, `800 40px ${F}`, C.berry, "center");
-    if (draw) { ctx.font = `800 40px ${F}`; const tw = ctx.measureText(T.menu.toUpperCase()).width; ctx.fillStyle = C.line; ctx.fillRect(L, y - 4, (cw - tw) / 2 - 30, 3); ctx.fillRect(W/2 + tw/2 + 30, y - 4, (cw - tw) / 2 - 30, 3); }
-    y += 90;
-    rows.forEach(({r, whole}, i) => {
-      ctx.font = `800 38px ${F}`;
-      const lines = wrap(ctx, cakeName(r, "", Lg), cw - 230);
-      lines.forEach((ln, j) => txt(ln, L, y + j*46, `800 38px ${F}`, C.ink));
-      txt(fmtP(whole), R, y, `800 44px ${F}`, C.berry, "right");
-      let yl = y + (lines.length - 1) * 46 + 42;
-      const sz = sizeLine(r, Lg); if (sz) txt(sz, L, yl, `600 27px ${F}`, C.muted);
-      const sp = m.slices ? slicePrice(r, whole) : 0;
-      if (sp) txt(`${T.per(r.piece)} ${money(sp)}`, R, y + 42, `700 27px ${F}`, C.muted, "right");
-      y = Math.max(yl, y + 42) + 50;
-      if (i < rows.length - 1) { rule(y - 6); y += 58; }
+  const biz = BIZ(), bizLogo = await loadBizLogo(), appLogo = bizLogo ? null : await loadLogo(), Lg = rlang(), T = RT[Lg];
+  const F = "Nunito, system-ui, sans-serif";
+  const C = {bg:"#FBF5EB", card:"#FFFFFF", ink:"#2A1A20", muted:"#8C7A80", line:"#F0E4E2", wine:"#8E1B3A", berry:"#C8324F", blush:"#F9EAEA"};
+  const items = menuIds().filter(id => !m.off[id]).map(id => ({id, r: db.recipes[id], whole: menuPrice(id, m), src: menuPhoto(id, m)})).filter(x => x.whole > 0);
+  for (const it of items) it.img = await loadImg(it.src);
+  const per = m.per, rows = per / 2, pages = Math.max(1, Math.ceil(items.length / per));
+  // Photos keep a 4:3 shape so a slice isn't cut off; 6 per page uses a tall story-size page
+  const W = 1080, H = per === 6 ? 1920 : 1350, P = 56, GAP = 24;
+  const headH = 200, footH = (m.note || biz.contact) ? 104 : 40;
+  const TXT = 156, cardW = (W - 2*P - GAP) / 2, room = H - 2*P - headH - footH - 12;
+  const photoH = Math.round(Math.min(cardW * 0.75, (room - (rows - 1) * GAP) / rows - TXT)), cardH = photoH + TXT;
+  const gridH = rows * cardH + (rows - 1) * GAP, gridTop = P + headH + Math.max(0, (room - gridH) / 2);
+  const out = [];
+  for (let pg = 0; pg < pages; pg++) {
+    const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+    const ctx = cv.getContext("2d");
+    const txt = (s, x, y, font, color, align = "left") => { ctx.font = font; ctx.fillStyle = color; ctx.textAlign = align; ctx.fillText(s, x, y); };
+    ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H);
+    // header: logo, MENU, page number
+    if (bizLogo) { const k = Math.min(124 / bizLogo.width, 124 / bizLogo.height); ctx.drawImage(bizLogo, W/2 - bizLogo.width*k/2, P - 18, bizLogo.width*k, bizLogo.height*k); }
+    else { if (appLogo) { ctx.save(); ctx.beginPath(); ctx.roundRect(W/2 - 50, P, 100, 100, 24); ctx.clip(); ctx.drawImage(appLogo, W/2 - 50, P, 100, 100); ctx.restore(); }
+      txt(biz.name || "CakeCart", W/2, P + 132, `800 30px ${F}`, C.wine, "center"); }
+    const ty = P + 160, title = T.menu.toUpperCase();
+    txt(title, W/2, ty, `800 38px ${F}`, C.berry, "center");
+    ctx.font = `800 38px ${F}`; const tw = ctx.measureText(title).width;
+    ctx.fillStyle = C.line; ctx.fillRect(P, ty - 13, (W - 2*P - tw)/2 - 28, 3); ctx.fillRect(W/2 + tw/2 + 28, ty - 13, (W - 2*P - tw)/2 - 28, 3);
+    if (pages > 1) txt(`${pg + 1}/${pages}`, W - P, P + 24, `800 26px ${F}`, C.muted, "right");
+    // cards
+    items.slice(pg * per, pg * per + per).forEach((it, i) => {
+      const x = P + (i % 2) * (cardW + GAP), y = gridTop + Math.floor(i / 2) * (cardH + GAP);
+      ctx.save(); ctx.shadowColor = "rgba(142,27,58,.10)"; ctx.shadowBlur = 24; ctx.shadowOffsetY = 6;
+      ctx.fillStyle = C.card; ctx.beginPath(); ctx.roundRect(x, y, cardW, cardH, 30); ctx.fill(); ctx.restore();
+      // photo, cropped to fill
+      ctx.save(); ctx.beginPath(); ctx.roundRect(x, y, cardW, photoH, [30, 30, 0, 0]); ctx.clip();
+      if (it.img) { const s = Math.max(cardW / it.img.width, photoH / it.img.height), w = it.img.width * s, h = it.img.height * s;
+        ctx.drawImage(it.img, x + (cardW - w)/2, y + (photoH - h)/2, w, h); }
+      else { ctx.fillStyle = C.blush; ctx.fillRect(x, y, cardW, photoH);
+        const lg = bizLogo || appLogo; if (lg) { const k = Math.min(photoH * .5 / lg.width, photoH * .5 / lg.height); ctx.globalAlpha = .9; ctx.drawImage(lg, x + cardW/2 - lg.width*k/2, y + photoH/2 - lg.height*k/2, lg.width*k, lg.height*k); ctx.globalAlpha = 1; } }
+      ctx.restore();
+      // name (up to 2 lines), size, prices
+      const tx = x + 26, tr = x + cardW - 26; let ny = y + photoH + 42;
+      ctx.font = `800 28px ${F}`; let lines = wrap(ctx, cakeName(it.r, "", Lg), cardW - 52);
+      if (lines.length > 2) { lines = lines.slice(0, 2); while (ctx.measureText(lines[1] + "…").width > cardW - 52 && lines[1].length) lines[1] = lines[1].slice(0, -1); lines[1] += "…"; }
+      if (lines.length === 1) ny += 12;
+      lines.forEach((ln, j) => txt(ln, tx, ny + j * 34, `800 28px ${F}`, C.ink));
+      const by = y + cardH - 22;
+      txt(fmtP(it.whole), tx, by, `800 38px ${F}`, C.berry);
+      const sp = m.slices ? slicePrice(it.r, it.whole) : 0;
+      txt(sp ? `${T.per(it.r.piece)} ${money(sp)}` : sizeLine(it.r, Lg).split(" · ")[0], tr, by - 2, `700 23px ${F}`, C.muted, "right");
     });
-    if (!rows.length) { txt(Lg === "es" ? "Añade precios para ver el menú" : "Add prices to see your menu", W/2, y, `700 32px ${F}`, C.muted, "center"); y += 40; }
-    y += 40;
-    if (m.note || biz.contact) { rule(y); y += 70; }
-    if (m.note) { ctx.font = `700 32px ${F}`; for (const ln of wrap(ctx, m.note, cw)) { txt(ln, W/2, y, `700 32px ${F}`, C.ink, "center"); y += 44; } y += 6; }
-    if (biz.contact) { txt(biz.contact, W/2, y, `600 30px ${F}`, C.muted, "center"); y += 44; }
-    return y - 44 + IN + P;
+    if (!items.length) txt(Lg === "es" ? "Añade precios para ver el menú" : "Add prices to see your menu", W/2, H/2, `700 32px ${F}`, C.muted, "center");
+    // footer
+    let fy = H - P - footH + 54;
+    if (m.note) { ctx.font = `700 26px ${F}`; txt(wrap(ctx, m.note, W - 2*P)[0], W/2, fy, `700 26px ${F}`, C.ink, "center"); fy += 38; }
+    if (biz.contact) txt(biz.contact, W/2, fy, `600 24px ${F}`, C.muted, "center");
+    out.push(cv);
   }
-  const probe = document.createElement("canvas").getContext("2d");
-  const H = Math.ceil(layout(probe, false));
-  const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
-  const ctx = cv.getContext("2d");
-  ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H);
-  ctx.fillStyle = C.card; ctx.shadowColor = "rgba(142,27,58,.10)"; ctx.shadowBlur = 40; ctx.shadowOffsetY = 10;
-  ctx.beginPath(); ctx.roundRect(P, P, W - 2*P, H - 2*P, 44); ctx.fill(); ctx.shadowColor = "transparent";
-  layout(ctx, true);
-  return cv;
+  return out;
 }
 // Share or save a picture: share sheet when the phone allows it, otherwise a download
 async function shareImage(cv, fname, title, saveOnly){
@@ -1127,38 +1165,57 @@ async function shareImage(cv, fname, title, saveOnly){
 }
 async function openMenu(){
   const m = MENU();
-  let cv = await drawMenu(m);
+  let pages = await drawMenu(m);
+  const imgs = () => pages.map((cv, i) => `<img class="receiptimg menupage" src="${cv.toDataURL("image/jpeg", .9)}" alt="Menu page ${i+1}">`).join("");
+  const anySample = () => menuIds().some(id => !m.off[id] && !db.recipes[id].photo && m.samples && photoFor(id, "slice"));
   openSheet("Price menu", `
     ${langChips(rlang())}
-    <img class="receiptimg" id="mn_img" src="${cv.toDataURL("image/png")}" alt="Price menu">
+    <div id="mn_warn"></div>
+    <div id="mn_pages">${imgs()}</div>
     <button class="primary" id="mn_share"><svg viewBox="0 0 24 24"><path d="M12 15V3M7 8l5-5 5 5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>Share menu</button>
-    <div class="btnrow"><button class="ghostbtn" id="mn_save">Save image</button><button class="ghostbtn" id="mn_biz">Name &amp; logo</button></div>
+    <div class="btnrow"><button class="ghostbtn" id="mn_save">Save images</button><button class="ghostbtn" id="mn_biz">Name &amp; logo</button></div>
     <div class="group" style="margin-top:18px"><h4>What's on it</h4>
+      <div class="field"><span>Cakes per page</span><div class="seg2"><button type="button" class="chip ${m.per===4?"on":""}" data-per="4">4 · for posts</button><button type="button" class="chip ${m.per===6?"on":""}" data-per="6">6 · for stories</button></div></div>
       <label class="toggle"><span>Show slice prices<small>Whole price ÷ slices, rounded up to 25¢</small></span><button class="switch ${m.slices?"on":""}" id="mn_sl" role="switch"></button></label>
+      <label class="toggle"><span>Use sample photos for testing<small>Fills in cakes that don’t have your own photo yet</small></span><button class="switch ${m.samples?"on":""}" id="mn_smp" role="switch"></button></label>
       <label class="field"><span>Note at the bottom <small>(optional)</small></span><input id="mn_note" value="${esc(m.note)}" placeholder="e.g. Order 3 days ahead · Delivery in Ponce"></label>
-      <p class="small" style="margin:0 0 8px">Tap a cake to show or hide it. Prices start at your selling price, rounded up to the dollar; type your own to change them.</p>
+      <p class="small" style="margin:0 0 8px">Tap a cake to show or hide it. Prices start at your selling price, rounded up to the dollar; type your own to change them. Add your own photos in each recipe’s details.</p>
       <div class="pickl" id="mn_list"></div></div>`, (b, close) => {
     let t = null;
     const save = () => store.set("menu", m);
-    const redraw = () => { clearTimeout(t); t = setTimeout(async () => { cv = await drawMenu(m); const im = b.querySelector("#mn_img"); if (im) im.src = cv.toDataURL("image/png"); }, 250); };
+    const warn = () => { b.querySelector("#mn_warn").innerHTML = anySample() ? `<div class="mnwarn"><b>Testing only.</b> Some cakes show the app’s sample photos (from Sugar Spun Run). Don’t send this to customers until every cake has your own photo.</div>` : ""; };
+    const redraw = () => { clearTimeout(t); t = setTimeout(async () => { pages = await drawMenu(m); const box = b.querySelector("#mn_pages"); if (box) box.innerHTML = imgs(); warn(); }, 250); };
     const paintList = () => {
       b.querySelector("#mn_list").innerHTML = menuIds().map(id => { const r = db.recipes[id], on = !m.off[id], auto = pricing(r).price;
         return `<div class="pickrow menurow ${on?"on":""}" data-id="${esc(id)}">
           <button class="pickhit" aria-label="Show or hide ${esc(r.name)}"><span class="pickbox" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
-          <span class="picktxt"><b>${esc(r.name)}</b><small>${auto > 0 ? `Selling price ${money(auto)}` : "No price yet: add ingredient prices"}</small></span></button>
+          <span class="picktxt"><b>${esc(r.name)}</b><small>${r.photo ? "Your photo ✓" : "No photo of yours yet"} · ${auto > 0 ? `selling ${money(auto)}` : "no price yet"}</small></span></button>
           <label class="mnprice"><span>$</span><input inputmode="decimal" data-p="${esc(id)}" value="${num(m.price[id]) > 0 ? r2(m.price[id]) : ""}" placeholder="${auto > 0 ? Math.ceil(auto) : "0"}" aria-label="Menu price for ${esc(r.name)}"></label></div>`; }).join("");
       b.querySelectorAll(".pickhit").forEach(h => h.onclick = () => { const id = h.parentElement.dataset.id; if (m.off[id]) delete m.off[id]; else m.off[id] = true; save(); h.parentElement.classList.toggle("on", !m.off[id]); redraw(); });
       b.querySelectorAll("[data-p]").forEach(inp => inp.oninput = () => { const v = num(inp.value); if (v > 0) m.price[inp.dataset.p] = v; else delete m.price[inp.dataset.p]; save(); redraw(); });
     };
-    paintList();
+    paintList(); warn();
+    b.querySelectorAll("[data-per]").forEach(c => c.onclick = () => { m.per = +c.dataset.per; b.querySelectorAll("[data-per]").forEach(x => x.classList.toggle("on", x === c)); save(); redraw(); });
     b.querySelector("#mn_sl").onclick = e => { m.slices = !m.slices; e.currentTarget.classList.toggle("on", m.slices); save(); redraw(); };
+    b.querySelector("#mn_smp").onclick = e => { m.samples = !m.samples; e.currentTarget.classList.toggle("on", m.samples); save(); redraw(); };
     b.querySelector("#mn_note").oninput = e => { m.note = e.target.value; save(); redraw(); };
-    const fname = () => `${(BIZ().name || "CakeCart").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9]+/g, "-")}-${rlang() === "es" ? "Menu-ES" : "Menu"}.png`;
-    b.querySelector("#mn_share").onclick = () => shareImage(cv, fname(), rlang() === "es" ? "Menú" : "Menu");
-    b.querySelector("#mn_save").onclick = () => shareImage(cv, fname(), "Save menu", true);
+    const base = () => `${(BIZ().name || "CakeCart").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9]+/g, "-")}-${rlang() === "es" ? "Menu-ES" : "Menu"}`;
+    const files = async () => Promise.all(pages.map(async (cv, i) => ({name: `${base()}${pages.length > 1 ? "-" + (i+1) : ""}.jpg`, blob: await new Promise(res => cv.toBlob(res, "image/jpeg", .92))})));
+    b.querySelector("#mn_share").onclick = async () => { if (anySample()) toast("Heads up: this menu still has sample photos"); shareImages(await files(), rlang() === "es" ? "Menú" : "Menu"); };
+    b.querySelector("#mn_save").onclick = async () => shareImages(await files(), "Save menu", true);
     b.querySelector("#mn_biz").onclick = () => editBusiness(() => { close(); setTimeout(openMenu, 250); });
     hookLang(b, () => { close(); setTimeout(openMenu, 250); });
   }, {tall:true});
+}
+// Share or save several pictures at once (the menu pages)
+async function shareImages(list, title, saveOnly){
+  const saveAll = () => list.forEach((f, i) => setTimeout(() => { const a = document.createElement("a"); a.href = URL.createObjectURL(f.blob); a.download = f.name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500); }, i * 400));
+  if (IS_APP) { try { await Native.shareFiles(list, title); } catch(e) { if (!/cancel/i.test(e && e.message || "")) toast("Couldn’t share: " + (e.message || e)); } return; }
+  if (saveOnly) { saveAll(); toast(list.length > 1 ? `${list.length} images saved` : "Image saved"); return; }
+  try { const fs = list.map(f => new File([f.blob], f.name, {type: f.blob.type}));
+    if (navigator.canShare && navigator.canShare({files: fs})) await navigator.share({files: fs, title});
+    else { saveAll(); toast("Images saved. Attach them in your messaging app."); }
+  } catch(e) { if (e && e.name !== "AbortError") { saveAll(); toast("Images saved. Attach them in your messaging app."); } }
 }
 function editBusiness(done){
   const biz = BIZ();
