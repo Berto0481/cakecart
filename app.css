@@ -388,3 +388,9 @@ button.cake{width:100%;text-align:left;font:inherit;color:inherit}
 .menupage{margin-bottom:12px}
 .mnwarn{background:#FFF1D6;color:#6B4600;border-radius:14px;padding:10px 14px;font-size:14px;margin-bottom:12px}
 .photoprev img{object-fit:cover}
+
+.badge.free{background:#E8E3F5;color:#4A3A8C}
+.omoney b.freeb{color:#4A3A8C}
+.msub.freesub{margin-top:6px;color:#4A3A8C}
+.kindseg .chip{padding:11px 4px}
+.freeinl{font-weight:800;color:#4A3A8C;padding:0 6px}

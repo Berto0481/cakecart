@@ -653,6 +653,9 @@ const parseDay = s => { const [y,m,d] = (s||"").split("-").map(Number); return y
 const fmtDay = s => { const d = parseDay(s); return d ? d.toLocaleDateString(undefined, {weekday:"short", month:"short", day:"numeric"}) : "No date"; };
 const orderTotal = o => o.items.reduce((a, it) => a + num(it.price) * num(it.qty), 0);
 const orderCost = o => o.items.reduce((a, it) => a + num(it.cost) * num(it.qty), 0);
+// Gifts and samples: you still bake (and shop for) them, but they're not sales, so they stay out of profit
+const isFree = o => o.kind === "gift" || o.kind === "sample";
+const KIND_LABEL = {gift: "Gift", sample: "Sample"};
 const orderLine = o => o.items.map(it => `${it.qty} × ${(db.recipes[it.recipe]?.name || it.name || "Cake").replace(/ Cheesecake$/,"")}`).join(" · ");
 function daysUntil(s){ const d = parseDay(s); if (!d) return null; const t = parseDay(todayStr()); return Math.round((d - t) / 86400000); }
 function dueLabel(o){
@@ -666,8 +669,10 @@ function dueLabel(o){
 function renderOrders(){
   const all = ORDERS(), [y, m] = omonth;
   const inMonth = all.filter(o => { const d = parseDay(o.due); return d && d.getFullYear() === y && d.getMonth() === m; });
-  const sales = inMonth.reduce((a,o) => a + orderTotal(o), 0), cost = inMonth.reduce((a,o) => a + orderCost(o), 0);
-  const paid = inMonth.filter(o => o.paid).reduce((a,o) => a + orderTotal(o), 0);
+  const sold = inMonth.filter(o => !isFree(o)), free = inMonth.filter(isFree);
+  const sales = sold.reduce((a,o) => a + orderTotal(o), 0), cost = sold.reduce((a,o) => a + orderCost(o), 0);
+  const paid = sold.filter(o => o.paid).reduce((a,o) => a + orderTotal(o), 0);
+  const freeCakes = free.reduce((a,o) => a + o.items.reduce((b,it) => b + num(it.qty), 0), 0), freeCost = free.reduce((a,o) => a + orderCost(o), 0);
   const cakes = inMonth.reduce((a,o) => a + o.items.reduce((b,it) => b + num(it.qty), 0), 0);
   const monthName = new Date(y, m, 1).toLocaleDateString(undefined, {month:"long", year:"numeric"});
   const upcoming = all.filter(o => !o.done).sort((a,b) => (a.due||"9").localeCompare(b.due||"9"));
@@ -679,7 +684,8 @@ function renderOrders(){
         <div><small>Costs</small><b>${mm(cost)}</b></div>
         <div><small>Profit</small><b class="hot">${mm(sales - cost)}</b></div>
       </div>
-      <div class="msub">${inMonth.length} order${inMonth.length===1?"":"s"} · ${cakes} cake${cakes===1?"":"s"} · Paid ${mm(paid)}${sales-paid>0.005?` · <span class="warnc">Unpaid ${mm(sales-paid)}</span>`:""}</div>
+      <div class="msub">${sold.length} order${sold.length===1?"":"s"} · ${cakes - freeCakes} cake${cakes-freeCakes===1?"":"s"} · Paid ${mm(paid)}${sales-paid>0.005?` · <span class="warnc">Unpaid ${mm(sales-paid)}</span>`:""}</div>
+      ${free.length ? `<div class="msub freesub">Gifts &amp; samples: ${freeCakes} cake${freeCakes===1?"":"s"} · cost you ${mm(freeCost)} · not counted in profit</div>` : ""}
     </div>`;
   if (upcoming.length) h += `<button class="primary shopbtn" id="shopUpcoming"><svg viewBox="0 0 24 24"><path d="M3 4h2l2.4 11h10.2L20 8H7"/><circle cx="9" cy="19.5" r="1.5"/><circle cx="17" cy="19.5" r="1.5"/></svg>Shop for upcoming orders</button>`;
   h += `<div class="seg">
@@ -693,7 +699,8 @@ function renderOrders(){
       <div class="otop"><span class="odate">${esc(fmtDay(o.due))}${o.method?` <span class="omethod">· ${o.method==="delivery"?"Delivery":"Pickup"}</span>`:""}</span>${dueLabel(o)}</div>
       <div class="oname">${esc(o.customer || "No name")}</div>
       <div class="oitems">${esc(orderLine(o))}</div>
-      <div class="obot"><span class="badge ${o.paid?"paid":"unpaid"}">${o.paid?"Paid":"Not paid"}</span><span class="omoney"><b>${mm(tot)}</b><small>profit ${mm(pr)}</small></span></div>
+      <div class="obot">${isFree(o) ? `<span class="badge free">${KIND_LABEL[o.kind]}</span><span class="omoney"><b class="freeb">Free</b><small>cost ${mm(orderCost(o))}</small></span>`
+        : `<span class="badge ${o.paid?"paid":"unpaid"}">${o.paid?"Paid":"Not paid"}</span><span class="omoney"><b>${mm(tot)}</b><small>profit ${mm(pr)}</small></span>`}</div>
     </button>`; }).join("") + `</div>`;
   $("#ordersBody").innerHTML = h;
   if ($("#mPrev")) $("#mPrev").onclick = () => { omonth = m === 0 ? [y-1, 11] : [y, m-1]; renderOrders(); };
@@ -745,32 +752,40 @@ function editOrder(oid){
     <div class="field"><span>How they get it</span><div class="seg2">
       <button type="button" class="chip ${o.method==="pickup"?"on":""}" data-m="pickup">Pickup</button>
       <button type="button" class="chip ${o.method==="delivery"?"on":""}" data-m="delivery">Delivery</button></div></div>
+    <div class="field"><span>Type of order</span><div class="seg2 kindseg">
+      <button type="button" class="chip ${!isFree(o)?"on":""}" data-k="">Sale</button>
+      <button type="button" class="chip ${o.kind==="gift"?"on":""}" data-k="gift">Gift</button>
+      <button type="button" class="chip ${o.kind==="sample"?"on":""}" data-k="sample">Sample</button></div>
+      ${isFree(o) ? `<p class="small" style="margin:6px 0 0">Not charged. It still goes on your shopping list and reminders, but stays out of sales and profit.</p>` : ""}</div>
     <div class="group"><h4>Cakes</h4>
       ${o.items.length ? "" : `<p class="small" style="margin:0 0 10px">No cakes yet.</p>`}
       ${o.items.map((it, i) => `<div class="oitem" data-i="${i}">
         <select class="o_rec">${cakeOpts(it.recipe)}</select>
         <div class="orow"><div class="stepper sm"><button class="minus" aria-label="One less"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button><output>${it.qty}</output><button class="plus" aria-label="One more"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button></div>
-          <span class="inl"><em>$</em>${hideMoney ? `<input class="num o_price masked" value="•••" disabled data-v="${r2(num(it.price))}">` : `<input class="num o_price" inputmode="decimal" value="${r2(num(it.price))}">`}<em>each</em></span>
+          ${isFree(o) ? `<span class="inl freeinl">Free</span>` : `<span class="inl"><em>$</em>${hideMoney ? `<input class="num o_price masked" value="•••" disabled data-v="${r2(num(it.price))}">` : `<input class="num o_price" inputmode="decimal" value="${r2(num(it.price))}">`}<em>each</em></span>`}
           <button class="icon odel" aria-label="Remove"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
-        <p class="small" style="margin:4px 0 0">Suggested ${mm(pricing(db.recipes[it.recipe]||{sections:[]}).price)} · costs you ${mm(num(it.cost))}</p>
+        <p class="small" style="margin:4px 0 0">${isFree(o) ? "" : `Suggested ${mm(pricing(db.recipes[it.recipe]||{sections:[]}).price)} · `}costs you ${mm(num(it.cost))}</p>
       </div>`).join("")}
       <button class="addline" id="o_add"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add a cake</button>
     </div>
-    <div class="card pricing">
+    ${isFree(o) ? `<div class="card pricing">
+      <div class="prow2 big"><span>Cost to make</span><b>${mm(orderCost(o))}</b></div>
+      <div class="prow2"><span>Counted in profit</span><b>No</b></div>
+    </div>` : `<div class="card pricing">
       <div class="prow2"><span>Total charged</span><b class="hot">${mm(orderTotal(o))}</b></div>
       <div class="prow2"><span>Your cost</span><b>${mm(orderCost(o))}</b></div>
       <div class="prow2 big"><span>Profit</span><b>${mm(orderTotal(o) - orderCost(o))}</b></div>
     </div>
-    <label class="toggle"><span>Paid</span><button class="switch ${o.paid?"on":""}" id="o_paid" role="switch"></button></label>
+    <label class="toggle"><span>Paid</span><button class="switch ${o.paid?"on":""}" id="o_paid" role="switch"></button></label>`}
     <label class="toggle"><span>Delivered<small>Moves it out of Upcoming</small></span><button class="switch ${o.done?"on":""}" id="o_done" role="switch"></button></label>
     <label class="field"><span>Notes <small>(optional)</small></span><input id="o_notes" value="${esc(o.notes||"")}" placeholder="e.g. Happy birthday writing, pickup 3pm"></label>
     <button class="primary" id="o_save">${isNew?"Save order":"Save"}</button>
-    <div class="btnrow"><button class="ghostbtn rcptbtn" id="o_rcpt"><svg viewBox="0 0 24 24"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/></svg>Receipt for customer</button></div>
+    <div class="btnrow" ${isFree(o) ? `style="display:none"` : ""}><button class="ghostbtn rcptbtn" id="o_rcpt"><svg viewBox="0 0 24 24"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/></svg>Receipt for customer</button></div>
     <div class="btnrow"><button class="ghostbtn" id="o_shop">Shopping list for this order</button>${isNew?"":`<button class="ghostbtn danger" id="o_del">Delete order</button>`}</div>`;
   openSheet(isNew ? "New order" : "Order", body(), (b, close, el) => mount(b, close, el), {tall:true, onClose: () => { if (view === "orders") renderOrders(); }});
   function grab(b){
     o.customer = b.querySelector("#o_cust").value.trim(); o.due = b.querySelector("#o_due").value; o.notes = b.querySelector("#o_notes").value.trim();
-    b.querySelectorAll(".oitem").forEach(row => { const it = o.items[+row.dataset.i], pi = row.querySelector(".o_price"); it.price = num(pi.dataset.v ?? pi.value); });
+    b.querySelectorAll(".oitem").forEach(row => { const it = o.items[+row.dataset.i], pi = row.querySelector(".o_price"); if (pi) it.price = num(pi.dataset.v ?? pi.value); });
   }
   function addItem(rid){ const r = db.recipes[rid]; const p = pricing(r); return {recipe: rid, name: r.name, qty: 1, price: Math.round(p.price), cost: r2(p.totalCost)}; }
   function mount(b, close, el){
@@ -788,12 +803,13 @@ function editOrder(oid){
       row.querySelector(".o_rec").onchange = e => { grab(b); const n = addItem(e.target.value); n.qty = it.qty; o.items[i] = n; re(); };
       row.querySelector(".plus").onclick = () => { grab(b); it.qty++; re(); };
       row.querySelector(".minus").onclick = () => { grab(b); if (it.qty > 1) it.qty--; re(); };
-      row.querySelector(".o_price").onchange = () => re();
+      const pin = row.querySelector(".o_price"); if (pin) pin.onchange = () => re();
       row.querySelector(".odel").onclick = () => { grab(b); o.items.splice(i, 1); re(); };
     });
-    b.querySelectorAll(".seg2 .chip").forEach(c => c.onclick = () => { o.method = o.method === c.dataset.m ? "" : c.dataset.m;
-      b.querySelectorAll(".seg2 .chip").forEach(x => x.classList.toggle("on", x.dataset.m === o.method)); });
-    b.querySelector("#o_paid").onclick = e => { o.paid = !o.paid; e.currentTarget.classList.toggle("on", o.paid); };
+    b.querySelectorAll("[data-m]").forEach(c => c.onclick = () => { o.method = o.method === c.dataset.m ? "" : c.dataset.m;
+      b.querySelectorAll("[data-m]").forEach(x => x.classList.toggle("on", x.dataset.m === o.method)); });
+    b.querySelectorAll("[data-k]").forEach(c => c.onclick = () => { grab(b); if (c.dataset.k) o.kind = c.dataset.k; else delete o.kind; re(); });
+    const pd = b.querySelector("#o_paid"); if (pd) pd.onclick = e => { o.paid = !o.paid; e.currentTarget.classList.toggle("on", o.paid); };
     b.querySelector("#o_done").onclick = e => { o.done = !o.done; e.currentTarget.classList.toggle("on", o.done); };
     const save = () => { grab(b); if (!o.items.length) { toast("Add at least one cake"); return false; }
       if (!o.created) o.created = todayStr();
