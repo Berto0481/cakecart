@@ -1080,7 +1080,7 @@ async function openReceipt(oid){
   }, {tall:true});
 }
 // ---------- PRICE MENU (an image to post or send to customers) ----------
-const MENU = () => { const m = store.get("menu", {}); m.off = m.off || {}; m.price = m.price || {}; if (m.slicesV !== 2) { m.slices = false; m.slicesV = 2; } m.note = m.note || ""; if (m.samples == null) m.samples = true; m.per = m.per === 6 ? 6 : 4; return m; };
+const MENU = () => { const m = store.get("menu", {}); m.off = m.off || {}; m.price = m.price || {}; if (m.slicesV !== 2) { m.slices = false; m.slicesV = 2; } m.note = m.note || ""; if (m.samples == null) m.samples = true; if (m.fit == null) m.fit = true; m.per = m.per === 6 ? 6 : 4; return m; };
 const menuIds = () => cakeIds();
 const fmtP = v => Math.abs(v - Math.round(v)) < 0.005 ? `$${Math.round(v)}` : money(v);
 function menuPrice(id, m){ const p = num(m.price[id]); if (p > 0) return p; const c = pricing(db.recipes[id]).price; return c > 0 ? Math.ceil(c) : 0; }
@@ -1127,8 +1127,16 @@ async function drawMenu(m){
       ctx.fillStyle = C.card; ctx.beginPath(); ctx.roundRect(x, y, cardW, cardH, 30); ctx.fill(); ctx.restore();
       // photo, cropped to fill
       ctx.save(); ctx.beginPath(); ctx.roundRect(x, y, cardW, photoH, [30, 30, 0, 0]); ctx.clip();
-      if (it.img) { const s = Math.max(cardW / it.img.width, photoH / it.img.height), w = it.img.width * s, h = it.img.height * s;
-        ctx.drawImage(it.img, x + (cardW - w)/2, y + (photoH - h)/2, w, h); }
+      if (it.img) {
+        const cover = Math.max(cardW / it.img.width, photoH / it.img.height), cw2 = it.img.width * cover, ch2 = it.img.height * cover;
+        if (m.fit) {
+          // whole photo, centered; the sides get a soft blurred copy so there are no empty bars
+          ctx.fillStyle = C.blush; ctx.fillRect(x, y, cardW, photoH);
+          if ("filter" in ctx) { ctx.filter = "blur(22px) brightness(1.06)"; ctx.drawImage(it.img, x + (cardW - cw2)/2 - 30, y + (photoH - ch2)/2 - 30, cw2 + 60, ch2 + 60); ctx.filter = "none"; ctx.fillStyle = "rgba(251,245,235,.45)"; ctx.fillRect(x, y, cardW, photoH); }
+          const fit = Math.min(cardW / it.img.width, photoH / it.img.height), w = it.img.width * fit, h = it.img.height * fit;
+          ctx.drawImage(it.img, x + (cardW - w)/2, y + (photoH - h)/2, w, h);
+        } else ctx.drawImage(it.img, x + (cardW - cw2)/2, y + (photoH - ch2)/2, cw2, ch2);
+      }
       else { ctx.fillStyle = C.blush; ctx.fillRect(x, y, cardW, photoH);
         const lg = bizLogo || appLogo; if (lg) { const k = Math.min(photoH * .5 / lg.width, photoH * .5 / lg.height); ctx.globalAlpha = .9; ctx.drawImage(lg, x + cardW/2 - lg.width*k/2, y + photoH/2 - lg.height*k/2, lg.width*k, lg.height*k); ctx.globalAlpha = 1; } }
       ctx.restore();
@@ -1177,6 +1185,7 @@ async function openMenu(){
     <div class="group" style="margin-top:18px"><h4>What's on it</h4>
       <div class="field"><span>Cakes per page</span><div class="seg2"><button type="button" class="chip ${m.per===4?"on":""}" data-per="4">4 · for posts</button><button type="button" class="chip ${m.per===6?"on":""}" data-per="6">6 · for stories</button></div></div>
       <label class="toggle"><span>Show slice prices<small>Whole price ÷ slices, rounded up to 25¢</small></span><button class="switch ${m.slices?"on":""}" id="mn_sl" role="switch"></button></label>
+      <label class="toggle"><span>Show the whole photo<small>Nothing cut off; off fills the card edge to edge</small></span><button class="switch ${m.fit?"on":""}" id="mn_fit" role="switch"></button></label>
       <label class="toggle"><span>Use sample photos for testing<small>Fills in cakes that don’t have your own photo yet</small></span><button class="switch ${m.samples?"on":""}" id="mn_smp" role="switch"></button></label>
       <label class="field"><span>Note at the bottom <small>(optional)</small></span><input id="mn_note" value="${esc(m.note)}" placeholder="e.g. Order 3 days ahead · Delivery in Ponce"></label>
       <p class="small" style="margin:0 0 8px">Tap a cake to show or hide it. Prices start at your selling price, rounded up to the dollar; type your own to change them. Add your own photos in each recipe’s details.</p>
@@ -1197,6 +1206,7 @@ async function openMenu(){
     paintList(); warn();
     b.querySelectorAll("[data-per]").forEach(c => c.onclick = () => { m.per = +c.dataset.per; b.querySelectorAll("[data-per]").forEach(x => x.classList.toggle("on", x === c)); save(); redraw(); });
     b.querySelector("#mn_sl").onclick = e => { m.slices = !m.slices; e.currentTarget.classList.toggle("on", m.slices); save(); redraw(); };
+    b.querySelector("#mn_fit").onclick = e => { m.fit = !m.fit; e.currentTarget.classList.toggle("on", m.fit); save(); redraw(); };
     b.querySelector("#mn_smp").onclick = e => { m.samples = !m.samples; e.currentTarget.classList.toggle("on", m.samples); save(); redraw(); };
     b.querySelector("#mn_note").oninput = e => { m.note = e.target.value; save(); redraw(); };
     const base = () => `${(BIZ().name || "CakeCart").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9]+/g, "-")}-${rlang() === "es" ? "Menu-ES" : "Menu"}`;
