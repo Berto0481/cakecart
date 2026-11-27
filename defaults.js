@@ -2632,3 +2632,33 @@ const NAMES_ES = {
   "Turtle Cheesecake": "Cheesecake Turtle"
 };
 for (const [id, es] of Object.entries(NAMES_ES)) if (DEFAULTS.recipes[id]) DEFAULTS.recipes[id].nameEs = es;
+
+// ---- Tiramisu (added Nov 27, 2026) ----
+DEFAULTS.ingredients["Mascarpone"] = {name:"Mascarpone", unit:"g", aisle:"Dairy & eggs", pantry:false, pkg:{size:227, label:"8 oz tub", note:"Add your price", shown:"oz"}, hint:"Room temperature for the filling"};
+DEFAULTS.ingredients["Ladyfingers (savoiardi)"] = {name:"Ladyfingers (savoiardi)", unit:"each", aisle:"Cookies, spreads & coffee", pantry:false, pkg:{size:24, label:"7 oz package (about 24)", note:"Add your price", shown:"each"}};
+DEFAULTS.ingredients["Espresso / strong coffee (brewed)"] = {name:"Espresso / strong coffee (brewed)", unit:"ml", aisle:"Cookies, spreads & coffee", pantry:true, hint:"Brewed at home, cooled"};
+DEFAULTS.recipes["Tiramisu"] = {
+  name:"Tiramisu", nameEs:"Tiramisú", desc:"Espresso-dipped ladyfingers layered with mascarpone cream", cat:"Tiramisu",
+  look:["#F2E6D8","#FBF3E4","#C9A27A","#6B4226"], per:"pan", size:"8×8 dish", pieces:9, piece:"slice", markup:3, packaging:0,
+  sections:[{title:"Ingredients", items:[
+    {ing:"Heavy cream", amt:360, note:"1½ cups (360 ml) heavy whipping cream"},
+    {ing:"Mascarpone", amt:227, note:"8 oz (225 g), room temperature"},
+    {ing:"Sugar (white)", amt:67, note:"⅓ cup (67 g) granulated"},
+    {ing:"Vanilla extract", amt:5, note:"1 teaspoon"},
+    {ing:"Espresso / strong coffee (brewed)", amt:360, note:"1½ cups (360 ml), cold; regular or decaf coffee works too"},
+    {ing:"Ladyfingers (savoiardi)", amt:24, note:"1 package, about 24"},
+    {ing:"Cocoa powder (unsweetened)", amt:10, note:"about 2 Tablespoons, for dusting"}
+  ]}],
+  steps:[
+    {t:"Beat the heavy cream on medium speed, adding the sugar and vanilla a little at a time, until it holds stiff peaks."},
+    {t:"Gently fold the room-temperature mascarpone into the whipped cream until smooth. Set it aside."},
+    {t:"Pour the cold espresso into a shallow dish. If you like, stir in about 3 Tablespoons of coffee liqueur (or dark rum or brandy); it's optional."},
+    {t:"Dip each ladyfinger for just a second on each side so it doesn't get soggy, and lay them in a single layer in the bottom of an 8×8\" dish."},
+    {t:"Spread half of the mascarpone cream evenly over the ladyfingers."},
+    {t:"Add a second layer of dipped ladyfingers, then spread the rest of the cream on top."},
+    {t:"Dust the top generously with cocoa powder through a fine strainer."},
+    {t:"Refrigerate at least 3 to 4 hours, or overnight, before cutting into 9 squares. It keeps 2 to 3 days in the fridge.", min:240}
+  ],
+  source:"https://tastesbetterfromscratch.com/easy-tiramisu/"
+};
+PHOTOS["Tiramisu"] = {slice:"icons/cakes/tiramisu-slice.webp", hero:"icons/cakes/tiramisu-hero.webp"};

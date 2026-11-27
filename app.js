@@ -53,7 +53,7 @@ const ingName = id => ING(id)?.name || id;
 const short = r => r.name.replace(/ Cheesecake$/,"");
 const newId = p => p + Date.now().toString(36) + Math.random().toString(36).slice(2,5);
 const AISLES = ["Dairy & eggs","Produce","Baking aisle","Cookies, spreads & coffee","Spices","Other"];
-const CATS = ["Cheesecakes","Brownies","Other"];
+const CATS = ["Cheesecakes","Brownies","Tiramisu","Other"];
 
 // Units: amounts are stored in g, ml or each; these let you type in kitchen units.
 const UNITS = {
@@ -464,12 +464,12 @@ function editRecipeDetails(id, done){
     };
     b.querySelector("#d_rmphoto").onclick = () => { photo = ""; paintP(); };
     const more = () => {
-      const sub = b.querySelector("#d_cat").value === "Homemade ingredient", pan = b.querySelector("#d_cat").value === "Brownies";
+      const sub = b.querySelector("#d_cat").value === "Homemade ingredient", pan = b.querySelector("#d_cat").value === "Brownies", tira = b.querySelector("#d_cat").value === "Tiramisu";
       b.querySelector("#d_more").innerHTML = sub
         ? `<div class="two"><label class="field"><span>One batch makes</span><input id="d_yield" inputmode="decimal" value="${r2(v.yield||236)}"></label>
            <label class="field"><span>Unit</span><select id="d_yu">${["ml","g","each"].map(u=>`<option ${(v.yieldUnit||"ml")===u?"selected":""}>${u}</option>`).join("")}</select></label></div>
            <p class="small" style="margin:0 0 12px">It becomes an ingredient you can add to other recipes, priced from this recipe.</p>`
-        : `<div class="two"><label class="field"><span>Sold as</span><input id="d_size" value="${esc(v.size || (pan?"9×9 pan":"9\" cheesecake"))}"></label>
+        : `<div class="two"><label class="field"><span>Sold as</span><input id="d_size" value="${esc(v.size || (pan?"9×9 pan":tira?"8×8 dish":"9\" cheesecake"))}"></label>
            <label class="field"><span>Cut into</span><input id="d_piece" value="${esc(v.piece || (pan?"brownie":"slice"))}"></label></div>`;
     };
     b.querySelector("#d_cat").onchange = () => { more(); paintP(); }; more(); paintP();
@@ -477,7 +477,7 @@ function editRecipeDetails(id, done){
       const name = b.querySelector("#d_name").value.trim(); if (!name) { toast("Give it a name"); return; }
       const type = b.querySelector("#d_cat").value, sub = type === "Homemade ingredient";
       const rid = id || newId("r");
-      const rec = r || {sections:[{title:"Ingredients", items:[]}], markup:3, packaging:0, pieces: type==="Brownies"?16:12,
+      const rec = r || {sections:[{title:"Ingredients", items:[]}], markup:3, packaging:0, pieces: type==="Brownies"?16:type==="Tiramisu"?9:12,
         look: LOOKS[Object.keys(db.recipes).length % LOOKS.length]};
       rec.name = name; rec.desc = b.querySelector("#d_desc").value.trim();
       const nes = b.querySelector("#d_namees").value.trim(); if (nes) rec.nameEs = nes; else delete rec.nameEs;
@@ -487,7 +487,7 @@ function editRecipeDetails(id, done){
         if (!ingId) { ingId = newId("i"); db.ingredients[ingId] = {name, unit: rec.yieldUnit, aisle:"Homemade", madeFrom: rid}; }
         else { db.ingredients[ingId].name = name; db.ingredients[ingId].unit = rec.yieldUnit; }
       } else {
-        delete rec.sub; rec.cat = type; rec.per = type === "Brownies" ? "pan" : "cheesecake";
+        delete rec.sub; rec.cat = type; rec.per = type === "Brownies" || type === "Tiramisu" ? "pan" : type === "Cheesecakes" ? "cheesecake" : (rec.per && rec.per !== "cheesecake" ? rec.per : "cake");
         rec.size = b.querySelector("#d_size").value.trim(); rec.piece = b.querySelector("#d_piece").value.trim() || "slice";
         if (rec.markup == null) rec.markup = 3; if (rec.pieces == null) rec.pieces = 12; if (rec.packaging == null) rec.packaging = 0;
       }
@@ -964,7 +964,7 @@ const cakeName = (r, fallback, L) => (L === "es" && r && r.nameEs) || (r && r.na
 function sizeLine(r, L){
   const n = num(r.pieces), w = String(r.piece || "slice");
   if (L !== "es") return [r.size, n ? `${n} ${w}${n === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ");
-  const size = String(r.size || "").replace(/^(\S+)\s+cheesecake$/i, "cheesecake de $1").replace(/^(\S+)\s+pan$/i, "molde de $1");
+  const size = String(r.size || "").replace(/^(\S+)\s+cheesecake$/i, "cheesecake de $1").replace(/^(\S+)\s+(pan|dish)$/i, "molde de $1");
   const pw = ({slice:"porciones", brownie:"brownies"})[w.toLowerCase()] || w;
   return [size, n ? `${n} ${pw}` : ""].filter(Boolean).join(" · ");
 }
