@@ -1003,6 +1003,9 @@ function findOrMakeCustomer(name){
 // Older data: make customers from the names already on orders, and keep new fields tidy
 function migrateDb(){
   db.orders = db.orders || []; CUSTOMERS(); db.expenses = db.expenses || [];
+  // one-time fixes to the built-in recipes on phones that already have them
+  db.fixes = db.fixes || {};
+  if (!db.fixes.water) { if (!db.ingredients.Water) db.ingredients.Water = clone(DEFAULTS.ingredients.Water); addWaterLines(db.recipes); db.fixes.water = true; saveDb(); }
   for (const o of db.orders) if (!o.customerId || !CUSTOMERS()[o.customerId]) { const id = findOrMakeCustomer(o.customer); if (id) o.customerId = id; else delete o.customerId; }
 }
 const custOrders = cid => ORDERS().filter(o => o.customerId === cid).sort((a, b) => (b.due || "").localeCompare(a.due || ""));

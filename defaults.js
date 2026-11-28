@@ -2662,3 +2662,24 @@ DEFAULTS.recipes["Tiramisu"] = {
   source:"https://tastesbetterfromscratch.com/easy-tiramisu/"
 };
 PHOTOS["Tiramisu"] = {slice:"icons/cakes/tiramisu-slice.webp", hero:"icons/cakes/tiramisu-hero.webp"};
+
+// ---- Water for toppings and sauces (added Nov 28, 2026; it was in the steps but missing from the lists) ----
+DEFAULTS.ingredients["Water"] = {name:"Water", unit:"ml", aisle:"Baking aisle", pantry:true, pkg:{size:1000, price:0, label:"Tap water", note:"Free", shown:"ml"}};
+const WATER_FIX = [
+  ["Strawberry Cheesecake", "Strawberry Topping", "Cornstarch", 30, "2 Tablespoons"],
+  ["Blueberry Cheesecake", "Blueberry Topping", "Cornstarch", 30, "about 2 Tablespoons, cold (check the original recipe)"],
+  ["Raspberry Cheesecake", "Raspberry Sauce", "Sugar (white)", 60, "¼ cup (60 ml)"],
+  ["Caramel Sauce", "Caramel", "Light corn syrup", 60, "¼ cup (60 ml)"]
+];
+// Adds the water line after the named ingredient, if the recipe and section are there and it isn't already
+function addWaterLines(recipes){
+  let n = 0;
+  for (const [rid, sec, after, amt, note] of WATER_FIX) {
+    const r = recipes[rid]; if (!r) continue;
+    const s = (r.sections || []).find(x => x.title === sec); if (!s || s.items.some(i => i.ing === "Water")) continue;
+    const at = s.items.findIndex(i => i.ing === after);
+    s.items.splice(at >= 0 ? at + 1 : s.items.length, 0, {ing: "Water", amt, note}); n++;
+  }
+  return n;
+}
+addWaterLines(DEFAULTS.recipes);
