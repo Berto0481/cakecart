@@ -180,7 +180,24 @@ function toast(msg, actionLabel, action){
   const t = $("#toast"); t.innerHTML = esc(msg) + (actionLabel ? ` <button class="toastbtn">${esc(actionLabel)}</button>` : "");
   t.classList.toggle("act", !!actionLabel); t.classList.add("show"); clearTimeout(toastT);
   if (actionLabel) t.querySelector(".toastbtn").onclick = () => { t.classList.remove("show"); action(); };
-  toastT = setTimeout(() => t.classList.remove("show"), actionLabel ? 5000 : 2600);
+  toastT = setTimeout(() => t.classList.remove("show"), actionLabel ? 7000 : 2600);
+}
+// Undo for anything that changes your saved data: take a snapshot first, put it back if Undo is tapped
+function snapshot(){ return {db: JSON.stringify(db), have: {...have}, checked: {...checked}, qty: {...qty}, some: {...some}, photos: Photos.all()}; }
+function undoToast(msg, snap, after){
+  toast(msg, "Undo", async () => {
+    db = JSON.parse(snap.db); have = snap.have; checked = snap.checked; qty = snap.qty; some = snap.some;
+    try { const now = Photos.all(); if (Object.keys(now).length !== Object.keys(snap.photos).length || Object.keys(snap.photos).some(k => now[k] !== snap.photos[k])) await Photos.replaceAll(snap.photos); } catch(e) {}
+    saveDb(); saveState(); refreshAll(); syncReminders(); if (after) after(); toast("Undone");
+  });
+}
+// Hide / Show button for any sheet that shows money (same setting as the Orders tab)
+function eyeInSheet(el, onToggle){
+  const slot = el.querySelector(".sheethead .ghost, .sheethead .eyepill"); if (!slot) return;
+  const pill = document.createElement("button"); pill.className = "eyepill"; pill.type = "button";
+  pill.innerHTML = (hideMoney ? EYE : EYE_OFF) + `<span>${hideMoney ? "Show" : "Hide"}</span>`;
+  pill.onclick = () => { hideMoney = !hideMoney; store.set("hideMoney", hideMoney); paintEye(); if (view === "orders") renderOrders(); onToggle(); eyeInSheet(el, onToggle); };
+  slot.replaceWith(pill);
 }
 const sheetStack = [];
 function openSheet(title, bodyHtml, mount, opts = {}){
@@ -483,11 +500,12 @@ function mountRecipe(id, body, close, el){
     toast("Recipe duplicated"); setTimeout(() => openRecipe(nid), 250);
   };
   confirmTap(body.querySelector("#delRecipe"), "Tap again to delete", () => {
+    const snap = snapshot();
     const madeOf = Object.entries(db.ingredients).find(([, i]) => i.madeFrom === id);
     if (madeOf && usedIn(madeOf[0]).length) { toast(`Used as ${madeOf[1].name} in other recipes. Remove it there first.`); return; }
     if (madeOf) delete db.ingredients[madeOf[0]];
     delete db.recipes[id]; Photos.del(id); if (DEFAULTS.recipes[id]) db.deleted.recipes.push(id);
-    delete qty[id]; saveState(); saveDb(); close(); toast("Recipe deleted");
+    delete qty[id]; saveState(); saveDb(); close(); refreshAll(); undoToast("Recipe deleted", snap);
   });
 }
 function editRecipeDetails(id, done){
@@ -568,6 +586,7 @@ function editSection(id, si, done){
     if (!isNew) {
       const up = b.querySelector("#s_up"); if (up) up.onclick = () => { r.sections.splice(si-1, 0, r.sections.splice(si,1)[0]); saveDb(); close(); done(); };
       confirmTap(b.querySelector("#s_del"), s.items.length ? `Delete with ${s.items.length} ingredient${s.items.length>1?"s":""}?` : "Tap again to delete", () => {
+        const snap = snapshot(); setTimeout(() => undoToast("Section deleted", snap, done), 50);
         r.sections.splice(si, 1); if (!r.sections.length) r.sections.push({title:"Ingredients", items:[]}); saveDb(); close(); done(); });
     }
   });
@@ -606,7 +625,7 @@ function editLine(id, si, ii, done){
       if (isNew) r.sections[si].items.push(line); else r.sections[si].items[ii] = line;
       saveDb(); close(); done();
     };
-    if (!isNew) confirmTap(b.querySelector("#l_del"), "Tap again to remove", () => { r.sections[si].items.splice(ii, 1); saveDb(); close(); done(); });
+    if (!isNew) confirmTap(b.querySelector("#l_del"), "Tap again to remove", () => { const snap = snapshot(); r.sections[si].items.splice(ii, 1); saveDb(); close(); done(); undoToast("Ingredient removed from recipe", snap, done); });
   });
 }
 
@@ -690,8 +709,9 @@ function editIngredient(id, onCreate){
     };
     if (!isNew) confirmTap(b.querySelector("#i_del"), used.length ? "Remove it from the recipes first" : "Tap again to delete", () => {
       if (usedIn(id).length) return;
+      const snap = snapshot();
       delete db.ingredients[id]; if (DEFAULTS.ingredients[id]) db.deleted.ingredients.push(id); delete have[id]; delete checked[id];
-      saveState(); saveDb(); close(); refreshAll(); toast("Ingredient deleted"); });
+      saveState(); saveDb(); close(); refreshAll(); undoToast("Ingredient deleted", snap); });
   });
 }
 
@@ -868,13 +888,7 @@ function editOrder(oid, preset){
   function mount(b, close, el){
     const re = () => { grab(b); replaceSheetBody(el, body(), nb => mount(nb, close, el)); };
     // Hide / Show in the order's own header, so prices can be revealed without leaving the order
-    const slot = el.querySelector(".sheethead .ghost, .sheethead .eyepill");
-    if (slot) {
-      const pill = document.createElement("button"); pill.className = "eyepill"; pill.type = "button";
-      pill.innerHTML = (hideMoney ? EYE : EYE_OFF) + `<span>${hideMoney ? "Show" : "Hide"}</span>`;
-      pill.onclick = () => { grab(b); hideMoney = !hideMoney; store.set("hideMoney", hideMoney); paintEye(); re(); };
-      slot.replaceWith(pill);
-    }
+    eyeInSheet(el, () => { grab(b); re(); });
     b.querySelector("#o_add").onclick = () => { grab(b); const first = cakeIds()[0]; if (!first) return; o.items.push(addItem(first)); re(); };
     b.querySelectorAll(".oitem").forEach(row => { const i = +row.dataset.i, it = o.items[i];
       row.querySelector(".o_rec").onchange = e => { grab(b); const n = addItem(e.target.value); n.qty = it.qty; o.items[i] = n; re(); };
@@ -900,7 +914,7 @@ function editOrder(oid, preset){
     b.querySelector("#o_save").onclick = () => { if (save()) { close(); syncReminders(); toast(isNew ? "Order saved" : "Saved"); } };
     b.querySelector("#o_shop").onclick = () => { if (save()) { close(); shopForOrders([o]); } };
     b.querySelector("#o_rcpt").onclick = () => { if (save()) openReceipt(o.id); };
-    const d = b.querySelector("#o_del"); if (d) confirmTap(d, "Tap again to delete", () => { db.orders = ORDERS().filter(x => x.id !== o.id); saveDb(); close(); syncReminders(); toast("Order deleted"); });
+    const d = b.querySelector("#o_del"); if (d) confirmTap(d, "Tap again to delete", () => { const snap = snapshot(); db.orders = ORDERS().filter(x => x.id !== o.id); saveDb(); close(); syncReminders(); undoToast("Order deleted", snap); });
   }
 }
 // ---------- CUSTOMERS ----------
@@ -930,7 +944,7 @@ function openCustomers(){
   openSheet("Customers", `
     <label class="search insheet"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="cs_q" type="search" placeholder="Search name or phone" autocomplete="off"></label>
     <div class="pickl" id="cs_list"></div>
-    <button class="primary" id="cs_new"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New customer</button>`, (b, close) => {
+    <button class="primary" id="cs_new"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New customer</button>`, (b, close, el) => {
     const paint = () => {
       const ids = Object.keys(CUSTOMERS()).filter(id => { const c = CUSTOMERS()[id]; return !q || normName(c.name + " " + (c.phone || "")).includes(normName(q)); })
         .sort((a, b) => { const la = custStats(a).last || "", lb = custStats(b).last || ""; return lb.localeCompare(la) || CUSTOMERS()[a].name.localeCompare(CUSTOMERS()[b].name); });
@@ -943,12 +957,15 @@ function openCustomers(){
     };
     b.querySelector("#cs_q").oninput = e => { q = e.target.value; paint(); };
     b.querySelector("#cs_new").onclick = () => openCustomer(null, paint);
-    paint();
+    paint(); eyeInSheet(el, paint);
   }, {tall:true});
 }
 function openCustomer(cid, after){
   const isNew = !cid, c = isNew ? {name:"", phone:"", notes:""} : clone(CUSTOMERS()[cid]);
-  const os = isNew ? [] : custOrders(cid), s = isNew ? null : custStats(cid), lastSale = os.find(o => o.items.length);
+  const os = isNew ? [] : custOrders(cid), lastSale = os.find(o => o.items.length);
+  const moneyBits = () => { if (isNew) return ""; const s = custStats(cid);
+    return `${s.n ? `<div class="card cstats"><div><small>Orders</small><b>${s.n}</b></div><div><small>Spent</small><b>${mm(s.spent)}</b></div><div><small>Owes</small><b class="${s.owes > 0.005 ? "warnc" : ""}">${mm(s.owes)}</b></div></div>` : ""}
+    <div class="group"><h4>Their orders</h4>${os.length ? `<div class="pickl">${os.map(o => `<button class="pickrow corow" data-o="${esc(o.id)}"><span class="picktxt"><b>${esc(fmtDay(o.due) || "No date")}${isFree(o) ? ` · ${KIND_LABEL[o.kind]}` : ""}</b><small>${esc(orderLine(o))}${isFree(o) ? "" : ` · ${mm(orderTotal(o))}`}</small></span></button>`).join("")}</div>` : `<p class="small" style="margin:0">No orders yet.</p>`}</div>`; };
   openSheet(isNew ? "New customer" : "Customer", `
     <label class="field"><span>Name</span><input id="cu_name" value="${esc(c.name)}" placeholder="e.g. María Rivera"></label>
     <label class="field"><span>Phone <small>(optional)</small></span><input id="cu_phone" type="tel" inputmode="tel" value="${esc(c.phone || "")}" placeholder="787-555-0123"></label>
@@ -956,10 +973,9 @@ function openCustomer(cid, after){
     ${!isNew && c.phone ? `<div class="btnrow"><a class="ghostbtn" href="tel:${esc(telDigits(c.phone))}">Call</a><a class="ghostbtn" href="${esc(waLink(c.phone))}" target="_blank" rel="noopener">WhatsApp</a></div>` : ""}
     <button class="primary" id="cu_save">${isNew ? "Save customer" : "Save"}</button>
     ${isNew ? "" : `<div class="btnrow"><button class="ghostbtn" id="cu_order">New order</button>${lastSale ? `<button class="ghostbtn" id="cu_again">Repeat last order</button>` : ""}</div>
-    ${s.n ? `<div class="card cstats"><div><small>Orders</small><b>${s.n}</b></div><div><small>Spent</small><b>${mm(s.spent)}</b></div><div><small>Owes</small><b class="${s.owes > 0.005 ? "warnc" : ""}">${mm(s.owes)}</b></div></div>` : ""}
-    <div class="group"><h4>Their orders</h4>${os.length ? `<div class="pickl">${os.map(o => `<button class="pickrow corow" data-o="${esc(o.id)}"><span class="picktxt"><b>${esc(fmtDay(o.due) || "No date")}${isFree(o) ? ` · ${KIND_LABEL[o.kind]}` : ""}</b><small>${esc(orderLine(o))}${isFree(o) ? "" : ` · ${mm(orderTotal(o))}`}</small></span></button>`).join("")}</div>` : `<p class="small" style="margin:0">No orders yet.</p>`}</div>
+    <div id="cu_money">${moneyBits()}</div>
     <button class="ghostbtn danger" id="cu_del" style="width:100%">Delete customer</button>
-    <p class="small">Deleting keeps their orders; they just won’t be linked to a saved customer.</p>`}`, (b, close) => {
+    <p class="small">Deleting keeps their orders; they just won’t be linked to a saved customer.</p>`}`, (b, close, el) => {
     const save = () => {
       const name = b.querySelector("#cu_name").value.trim(); if (!name) { toast("Give them a name"); return null; }
       const other = findCustomer(name); if (other && other !== cid) { toast("There’s already a customer with that name"); return null; }
@@ -973,10 +989,12 @@ function openCustomer(cid, after){
       b.querySelector("#cu_order").onclick = () => { const id = save(); if (!id) return; close(); editOrder(null, {customer: CUSTOMERS()[id].name}); };
       const ag = b.querySelector("#cu_again"); if (ag) ag.onclick = () => { const id = save(); if (!id) return; close();
         editOrder(null, {customer: CUSTOMERS()[id].name, method: lastSale.method || "", kind: lastSale.kind, items: lastSale.items.filter(it => db.recipes[it.recipe]).map(it => ({recipe: it.recipe, qty: it.qty}))}); };
-      b.querySelectorAll(".corow").forEach(r => r.onclick = () => editOrder(r.dataset.o));
+      const bindOrders = () => b.querySelectorAll(".corow").forEach(r => r.onclick = () => editOrder(r.dataset.o));
+      bindOrders(); eyeInSheet(el, () => { b.querySelector("#cu_money").innerHTML = moneyBits(); bindOrders(); });
       confirmTap(b.querySelector("#cu_del"), "Tap again to delete", () => {
+        const snap = snapshot();
         delete CUSTOMERS()[cid]; for (const o of ORDERS()) if (o.customerId === cid) delete o.customerId;
-        saveDb(); close(); if (after) after(); toast("Customer deleted"); });
+        saveDb(); close(); if (after) after(); undoToast("Customer deleted", snap, after); });
     }
   }, {tall: !isNew});
 }
@@ -1045,7 +1063,8 @@ function openReport(){
       EXPENSES().push({id: newId("x"), date: b.querySelector("#ex_date").value || todayStr(), what: b.querySelector("#ex_what").value.trim(), cat: b.querySelector("#ex_cat").value, amount});
       saveDb(); toast("Expense added"); re();
     };
-    b.querySelectorAll("[data-x]").forEach(x => confirmTap(x, "Tap again to delete", () => { db.expenses = EXPENSES().filter(e => e.id !== x.dataset.x); saveDb(); re(); }));
+    b.querySelectorAll("[data-x]").forEach(x => confirmTap(x, "Tap again to delete", () => { const snap = snapshot(); db.expenses = EXPENSES().filter(e => e.id !== x.dataset.x); saveDb(); re(); undoToast("Expense deleted", snap, () => { if (el.isConnected) re(); }); }));
+    eyeInSheet(el, re);
   }
 }
 function updateOrderBadge(){
@@ -1108,7 +1127,9 @@ function showAlarm(t){
 function renderTimers(){
   const bar = $("#bakeTimers"); if (!bar) return;
   bar.innerHTML = timers.map(t => `<button class="tchip ${left(t)?"":"done"}" data-timer="${t.id}"><svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/></svg><span>${esc(t.label)}</span><b>${left(t)?clock(left(t)):"Done!"}</b><i>×</i></button>`).join("");
-  bar.querySelectorAll(".tchip").forEach(c => c.onclick = () => { const t = timers.find(x => x.id === c.dataset.timer); if (t) Native.timerGone(t); timers = timers.filter(x => x.id !== c.dataset.timer); saveTimers(); renderTimers(); });
+  bar.querySelectorAll(".tchip").forEach(c => c.onclick = () => { const t = timers.find(x => x.id === c.dataset.timer); if (!t) return;
+    Native.timerGone(t); timers = timers.filter(x => x.id !== t.id); saveTimers(); renderTimers();
+    if (left(t)) toast(`Stopped “${t.label}”`, "Undo", () => { timers.push(t); saveTimers(); Native.timerStarted(t); renderTimers(); tick(); }); });
   bar.style.display = timers.length ? "" : "none"; tick();
 }
 async function keepAwake(on){
@@ -1571,20 +1592,33 @@ function openSettings(){
     b.querySelector("#b_file").onchange = e => {
       const f = e.target.files[0]; if (!f) return;
       const rd = new FileReader();
-      rd.onload = async () => { try {
+      rd.onload = () => { try {
           const data = JSON.parse(rd.result);
           if (data.app !== "CakeCart" || !data.db || !data.db.recipes || !data.db.ingredients) throw new Error("This isn’t a CakeCart backup file.");
+          const nR = Object.keys(data.db.recipes).length, nO = (data.db.orders || []).length, nP = Object.keys(data.photos || {}).length;
+          const when = data.savedAt ? new Date(data.savedAt).toLocaleDateString(undefined, {month:"short", day:"numeric", year:"numeric"}) : "an unknown date";
+          openSheet("Restore this backup?", `<div class="card note2">This backup is from <b>${esc(when)}</b> and has <b>${nR}</b> recipes, <b>${nO}</b> order${nO===1?"":"s"}${nP ? ` and <b>${nP}</b> photo${nP===1?"":"s"}` : ""}.</div>
+            <p class="small">It replaces everything on this phone right now. You can undo it right after.</p>
+            <button class="primary" id="rs_go">Replace with this backup</button><button class="ghostbtn" id="rs_no" style="width:100%;margin-top:8px">Cancel</button>`, (cb, cclose) => {
+            cb.querySelector("#rs_no").onclick = cclose;
+            cb.querySelector("#rs_go").onclick = async () => { cclose(); await applyRestore(data); };
+          });
+        } catch(err) { toast(err.message || "Couldn’t read that file."); } };
+      e.target.value = "";
+      rd.readAsText(f);
+    };
+    async function applyRestore(data){ try {
+          const snap = snapshot();
           db = data.db; have = data.have || {}; checked = {}; mergeDefaults();
           const photos = data.photos || {};
           for (const [id, r] of Object.entries(db.recipes)) if (r.photo) { photos[id] = r.photo; delete r.photo; }
           try { await Photos.replaceAll(photos); } catch(e) { for (const [id, p] of Object.entries(photos)) if (db.recipes[id]) db.recipes[id].photo = p; }
           migrateDb(); cleanQty(); saveDb(); saveState(); close(); refreshAll();
-          syncReminders(); toast(`Restored ${Object.keys(db.recipes).length} recipes`);
-        } catch(err) { toast(err.message || "Couldn’t read that file."); } };
-      rd.readAsText(f);
-    };
+          syncReminders(); undoToast(`Restored ${Object.keys(db.recipes).length} recipes`, snap);
+        } catch(err) { toast(err.message || "Couldn’t restore that file."); } }
     confirmTap(b.querySelector("#b_reset"), "Tap again to reset everything", () => {
-      const keepOrders = db.orders || [], keepBiz = db.business, keepCust = db.customers || {}, keepExp = db.expenses || []; db = clone(DEFAULTS); if (keepBiz) db.business = keepBiz; db.deleted = {recipes:[], ingredients:[]}; db.orders = keepOrders; db.customers = keepCust; db.expenses = keepExp; migrateDb(); saveDb(); cleanQty(); saveState(); close(); refreshAll(); toast("Back to the original data"); });
+      const snap = snapshot(); setTimeout(() => undoToast("Back to the original data", snap), 50);
+      const keepOrders = db.orders || [], keepBiz = db.business, keepCust = db.customers || {}, keepExp = db.expenses || []; db = clone(DEFAULTS); if (keepBiz) db.business = keepBiz; db.deleted = {recipes:[], ingredients:[]}; db.orders = keepOrders; db.customers = keepCust; db.expenses = keepExp; migrateDb(); saveDb(); cleanQty(); saveState(); close(); refreshAll(); });
   });
 }
 
@@ -1607,7 +1641,8 @@ function go(v){
 }
 document.querySelectorAll("[data-go]").forEach(b => b.onclick = () => go(b.dataset.go));
 $("#make").onclick = () => go("list");
-$("#uncheck").onclick = () => { checked = {}; saveState(); renderList(); };
+$("#uncheck").onclick = () => { const n = Object.keys(checked).length; if (!n) return; const prev = {...checked}; checked = {}; saveState(); renderList();
+  toast(`Unchecked ${n} item${n>1?"s":""}`, "Undo", () => { checked = prev; saveState(); renderList(); }); };
 $("#q").oninput = e => { query = e.target.value; renderCakes(); };
 $("#rq").oninput = e => { rquery = e.target.value; renderRecipes(); };
 $("#iq").oninput = e => { iquery = e.target.value; renderIngredients(); };
