@@ -12,6 +12,38 @@ if (!db || !db.recipes || !db.ingredients) db = clone(DEFAULTS);
 mergeDefaults();
 let qty = store.get("qty", {}), checked = store.get("checked", {}), have = store.get("have", {}), some = store.get("some", {});
 const saveDb = () => { db.savedAt = Date.now(); if (!store.set("db", db)) toast("Couldn’t save on this device. Make a backup in Settings."); };
+// ---------- photos: kept in the phone's IndexedDB, which has far more room than the main storage ----------
+const Photos = (() => {
+  const cache = {}; let dbp = null;
+  const open = () => dbp || (dbp = new Promise((res, rej) => {
+    if (!window.indexedDB) return rej(new Error("No photo storage"));
+    const r = indexedDB.open("cakecart-photos", 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("p");
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error || new Error("Photo storage unavailable"));
+  }));
+  const run = async (mode, fn) => { const d = await open(); return new Promise((res, rej) => {
+    const t = d.transaction("p", mode); fn(t.objectStore("p")); t.oncomplete = () => res(true); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); }); };
+  return {
+    get: id => cache[id] || null,
+    all: () => ({...cache}),
+    async put(id, url){ await run("readwrite", s => s.put(url, id)); cache[id] = url; },
+    async del(id){ try { await run("readwrite", s => s.delete(id)); } catch(e) {} delete cache[id]; },
+    async replaceAll(map){ await run("readwrite", s => { s.clear(); for (const [k, v] of Object.entries(map)) s.put(v, k); }); for (const k in cache) delete cache[k]; Object.assign(cache, map); },
+    async load(){ await run("readonly", s => { const c = s.openCursor(); c.onsuccess = () => { const cur = c.result; if (cur) { cache[cur.key] = cur.value; cur.continue(); } }; }); }
+  };
+})();
+// Your own photo for a recipe: from photo storage, or (older versions / no IndexedDB) kept inside the recipe
+const ownPhoto = id => Photos.get(id) || (db.recipes[id] && db.recipes[id].photo) || null;
+// Move photos saved by older versions out of the main storage, so saving stays fast
+async function startPhotos(){
+  try {
+    await Photos.load();
+    let moved = 0;
+    for (const [id, r] of Object.entries(db.recipes)) if (r.photo) { await Photos.put(id, r.photo); delete r.photo; moved++; }
+    if (moved) saveDb();
+  } catch(e) {}
+  refreshAll();
+}
 const saveState = () => { store.set("qty", qty); store.set("checked", checked); store.set("have", have); store.set("some", some); };
 
 // Add any built-in recipes or ingredients that are new in an app update, without touching your edits.
@@ -124,7 +156,7 @@ function need(id, v){
 // ---------- cake thumbnails ----------
 const LOOKS = [["#FBF0DC","#FFF8EC","#F8E7B0","#C08548"],["#FCE4E6","#E0485F","#F8E7C8","#C08548","#E0485F"],["#F1E4DE","#4A2A1F","#7A4A35","#2B1B16"],["#ECE8F7","#4A3A8C","#F8E8C4","#C08548","#6A59B8"],["#EEF5DC","#C9E08A","#F3F0C4","#C08548","#7FB13A"],["#FBEAD6","#C77B30","#F6E2B3","#B9783F"]];
 function photoFor(id, kind){
-  const own = db.recipes[id] && db.recipes[id].photo; if (own) return own;   // your own photo always wins
+  const own = ownPhoto(id); if (own) return own;   // your own photo always wins
   const p = (typeof PHOTOS !== "undefined" && PHOTOS[id]) || {};
   return kind === "hero" ? p.hero : (p.slice || p.whole);
 }
@@ -185,6 +217,28 @@ function renderCats(){
   const cats = ["All", ...CATS.filter(c => cakeIds().some(id => db.recipes[id].cat === c)), "Selected"];
   $("#cats").innerHTML = cats.map(c => `<button class="chip ${c===cat?"on":""}" data-c="${esc(c)}">${esc(c)}</button>`).join("");
   $("#cats").querySelectorAll(".chip").forEach(b => b.onclick = () => { cat = b.dataset.c; renderCats(); renderCakes(); });
+}
+// Gentle reminders at the top of the Cakes tab: back up now and then; on iPhone, install to the Home Screen
+const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const IS_STANDALONE = !!(navigator.standalone || (window.matchMedia && matchMedia("(display-mode: standalone)").matches));
+function renderNudges(){
+  const el = $("#nudges"); if (!el) return;
+  const now = Date.now(), last = store.get("lastBackup", null), snooze = store.get("bkSnooze", 0);
+  const used = (db.orders || []).length > 0 || !!db.savedAt, days = last ? Math.floor((now - last) / 864e5) : null;
+  const items = [];
+  if (IS_IOS && !IS_STANDALONE && !IS_APP && !store.get("iosTipDone", false))
+    items.push(`<div class="nudge"><b>Keep CakeCart on your Home Screen</b><p>Safari can erase a website’s saved data if you don’t open it for 7 days. Apps on the Home Screen are kept. First tap ⚙ and <b>Save a backup file</b>. Then tap Share <span aria-hidden="true">⬆</span> → <b>Add to Home Screen</b>, open CakeCart from there and use <b>Restore</b> to bring your data over.</p>
+      <div class="nbtns"><button class="ghostbtn" data-n="ios-backup">Back up first</button><button class="ghostbtn" data-n="ios-done">Got it</button></div></div>`);
+  if (used && now > snooze && (days === null || days >= 14))
+    items.push(`<div class="nudge"><b>${days === null ? "You haven’t made a backup yet" : `Last backup was ${days} days ago`}</b><p>A backup file keeps your recipes, prices, photos and orders safe if anything happens to this phone.</p>
+      <div class="nbtns"><button class="primary" data-n="backup">Back up now</button><button class="ghostbtn" data-n="later">Later</button></div></div>`);
+  el.innerHTML = items.join("");
+  el.querySelectorAll("[data-n]").forEach(btn => btn.onclick = () => {
+    const n = btn.dataset.n;
+    if (n === "backup" || n === "ios-backup") openSettings();
+    if (n === "later") { store.set("bkSnooze", now + 3 * 864e5); renderNudges(); }
+    if (n === "ios-done") { store.set("iosTipDone", true); renderNudges(); }
+  });
 }
 function renderCakes(){
   const q = query.trim().toLowerCase();
@@ -432,7 +486,7 @@ function mountRecipe(id, body, close, el){
     const madeOf = Object.entries(db.ingredients).find(([, i]) => i.madeFrom === id);
     if (madeOf && usedIn(madeOf[0]).length) { toast(`Used as ${madeOf[1].name} in other recipes. Remove it there first.`); return; }
     if (madeOf) delete db.ingredients[madeOf[0]];
-    delete db.recipes[id]; if (DEFAULTS.recipes[id]) db.deleted.recipes.push(id);
+    delete db.recipes[id]; Photos.del(id); if (DEFAULTS.recipes[id]) db.deleted.recipes.push(id);
     delete qty[id]; saveState(); saveDb(); close(); toast("Recipe deleted");
   });
 }
@@ -451,7 +505,7 @@ function editRecipeDetails(id, done){
         <div class="logobtns"><label class="ghostbtn filebtn">Choose photo…<input type="file" id="d_photo" accept="image/*"></label>
         <button class="ghostbtn danger" id="d_rmphoto">Remove</button></div></div></div>
     <button class="primary" id="d_save">${isNew?"Create recipe":"Save"}</button>`, (b, close) => {
-    let photo = (r && r.photo) || "";
+    let photo = (id && ownPhoto(id)) || "", photoChanged = false;
     const paintP = () => {
       b.querySelector("#d_pprev").innerHTML = photo ? `<img src="${photo}" alt="Your photo">` : `<span>No photo</span>`;
       b.querySelector("#d_rmphoto").style.display = photo ? "" : "none";
@@ -459,10 +513,10 @@ function editRecipeDetails(id, done){
     };
     b.querySelector("#d_photo").onchange = async e => {
       const f = e.target.files[0]; if (!f) return;
-      try { photo = await shrinkImage(f, 900, "image/jpeg", 0.82); paintP(); } catch(err) { toast(err.message); }
+      try { photo = await shrinkImage(f, 900, "image/jpeg", 0.82); photoChanged = true; paintP(); } catch(err) { toast(err.message); }
       e.target.value = "";
     };
-    b.querySelector("#d_rmphoto").onclick = () => { photo = ""; paintP(); };
+    b.querySelector("#d_rmphoto").onclick = () => { photo = ""; photoChanged = true; paintP(); };
     const more = () => {
       const sub = b.querySelector("#d_cat").value === "Homemade ingredient", pan = b.querySelector("#d_cat").value === "Brownies", tira = b.querySelector("#d_cat").value === "Tiramisu";
       b.querySelector("#d_more").innerHTML = sub
@@ -473,7 +527,7 @@ function editRecipeDetails(id, done){
            <label class="field"><span>Cut into</span><input id="d_piece" value="${esc(v.piece || (pan?"brownie":"slice"))}"></label></div>`;
     };
     b.querySelector("#d_cat").onchange = () => { more(); paintP(); }; more(); paintP();
-    b.querySelector("#d_save").onclick = () => {
+    b.querySelector("#d_save").onclick = async () => {
       const name = b.querySelector("#d_name").value.trim(); if (!name) { toast("Give it a name"); return; }
       const type = b.querySelector("#d_cat").value, sub = type === "Homemade ingredient";
       const rid = id || newId("r");
@@ -491,9 +545,13 @@ function editRecipeDetails(id, done){
         rec.size = b.querySelector("#d_size").value.trim(); rec.piece = b.querySelector("#d_piece").value.trim() || "slice";
         if (rec.markup == null) rec.markup = 3; if (rec.pieces == null) rec.pieces = 12; if (rec.packaging == null) rec.packaging = 0;
       }
-      if (photo && !sub) rec.photo = photo; else delete rec.photo;
       db.recipes[rid] = rec;
-      if (rec.photo && !store.set("db", db)) { delete rec.photo; saveDb(); toast("Your phone’s storage for CakeCart is full, so the photo wasn’t saved"); return; }
+      if (photoChanged || sub) {
+        if (photo && !sub) {
+          try { await Photos.put(rid, photo); delete rec.photo; }
+          catch(e) { rec.photo = photo; if (!store.set("db", db)) { delete rec.photo; toast("Your phone’s storage for CakeCart is full, so the photo wasn’t saved"); } }
+        } else { await Photos.del(rid); delete rec.photo; }
+      }
       saveDb(); close(); refreshAll();
       if (isNew) setTimeout(() => openRecipe(rid), 250); else if (done) done();
     };
@@ -655,6 +713,10 @@ const orderTotal = o => o.items.reduce((a, it) => a + num(it.price) * num(it.qty
 const orderCost = o => o.items.reduce((a, it) => a + num(it.cost) * num(it.qty), 0);
 // Gifts and samples: you still bake (and shop for) them, but they're not sales, so they stay out of profit
 const isFree = o => o.kind === "gift" || o.kind === "sample";
+// Payments: paid in full, or a deposit so far; and how they paid
+const PAY = {cash:"Cash", ath:"ATH Móvil", card:"Card", other:"Other"}, PAY_ES = {cash:"Efectivo", ath:"ATH Móvil", card:"Tarjeta", other:"Otro"};
+const amountPaid = o => isFree(o) ? 0 : o.paid ? orderTotal(o) : Math.min(num(o.deposit), orderTotal(o));
+const balanceDue = o => isFree(o) ? 0 : Math.max(0, orderTotal(o) - amountPaid(o));
 const KIND_LABEL = {gift: "Gift", sample: "Sample"};
 const orderLine = o => o.items.map(it => `${it.qty} × ${(db.recipes[it.recipe]?.name || it.name || "Cake").replace(/ Cheesecake$/,"")}`).join(" · ");
 function daysUntil(s){ const d = parseDay(s); if (!d) return null; const t = parseDay(todayStr()); return Math.round((d - t) / 86400000); }
@@ -671,9 +733,10 @@ function renderOrders(){
   const inMonth = all.filter(o => { const d = parseDay(o.due); return d && d.getFullYear() === y && d.getMonth() === m; });
   const sold = inMonth.filter(o => !isFree(o)), free = inMonth.filter(isFree);
   const sales = sold.reduce((a,o) => a + orderTotal(o), 0), cost = sold.reduce((a,o) => a + orderCost(o), 0);
-  const paid = sold.filter(o => o.paid).reduce((a,o) => a + orderTotal(o), 0);
+  const paid = sold.reduce((a,o) => a + amountPaid(o), 0);
   const freeCakes = free.reduce((a,o) => a + o.items.reduce((b,it) => b + num(it.qty), 0), 0), freeCost = free.reduce((a,o) => a + orderCost(o), 0);
   const cakes = inMonth.reduce((a,o) => a + o.items.reduce((b,it) => b + num(it.qty), 0), 0);
+  const monthExp = (db.expenses || []).filter(e => { const d = parseDay(e.date); return d && d.getFullYear() === y && d.getMonth() === m; }).reduce((a, e) => a + num(e.amount), 0);
   const monthName = new Date(y, m, 1).toLocaleDateString(undefined, {month:"long", year:"numeric"});
   const upcoming = all.filter(o => !o.done).sort((a,b) => (a.due||"9").localeCompare(b.due||"9"));
   const list = ofilter === "upcoming" ? upcoming : ofilter === "done" ? all.filter(o => o.done).sort((a,b) => (b.due||"").localeCompare(a.due||"")) : [...all].sort((a,b) => (b.due||"").localeCompare(a.due||""));
@@ -686,8 +749,10 @@ function renderOrders(){
       </div>
       <div class="msub">${sold.length} order${sold.length===1?"":"s"} · ${cakes - freeCakes} cake${cakes-freeCakes===1?"":"s"} · Paid ${mm(paid)}${sales-paid>0.005?` · <span class="warnc">Unpaid ${mm(sales-paid)}</span>`:""}</div>
       ${free.length ? `<div class="msub freesub">Gifts &amp; samples: ${freeCakes} cake${freeCakes===1?"":"s"} · cost you ${mm(freeCost)} · not counted in profit</div>` : ""}
+      ${monthExp ? `<div class="msub">Other expenses ${mm(monthExp)} · <b>after expenses ${mm(sales - cost - monthExp)}</b></div>` : ""}
     </div>`;
   if (upcoming.length) h += `<button class="primary shopbtn" id="shopUpcoming"><svg viewBox="0 0 24 24"><path d="M3 4h2l2.4 11h10.2L20 8H7"/><circle cx="9" cy="19.5" r="1.5"/><circle cx="17" cy="19.5" r="1.5"/></svg>Shop for upcoming orders</button>`;
+  h += `<div class="btnrow obtns"><button class="ghostbtn" id="openCustomers"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.5a6.5 6.5 0 0 1 3.5 5.5"/></svg>Customers</button><button class="ghostbtn" id="openReport"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Report</button></div>`;
   h += `<div class="seg">
       <button class="chip ${ofilter==="upcoming"?"on":""}" data-f="upcoming">Upcoming (${upcoming.length})</button>
       <button class="chip ${ofilter==="done"?"on":""}" data-f="done">Delivered (${all.length-upcoming.length})</button>
@@ -700,7 +765,7 @@ function renderOrders(){
       <div class="oname">${esc(o.customer || "No name")}</div>
       <div class="oitems">${esc(orderLine(o))}</div>
       <div class="obot">${isFree(o) ? `<span class="badge free">${KIND_LABEL[o.kind]}</span><span class="omoney"><b class="freeb">Free</b><small>cost ${mm(orderCost(o))}</small></span>`
-        : `<span class="badge ${o.paid?"paid":"unpaid"}">${o.paid?"Paid":"Not paid"}</span><span class="omoney"><b>${mm(tot)}</b><small>profit ${mm(pr)}</small></span>`}</div>
+        : `<span class="badge ${o.paid?"paid":num(o.deposit)>0?"deposit":"unpaid"}">${o.paid?`Paid${o.pay?` · ${PAY[o.pay]}`:""}`:num(o.deposit)>0?`Deposit ${mm(amountPaid(o))} · owes ${mm(balanceDue(o))}`:"Not paid"}</span><span class="omoney"><b>${mm(tot)}</b><small>profit ${mm(pr)}</small></span>`}</div>
     </button>`; }).join("") + `</div>`;
   $("#ordersBody").innerHTML = h;
   if ($("#mPrev")) $("#mPrev").onclick = () => { omonth = m === 0 ? [y-1, 11] : [y, m-1]; renderOrders(); };
@@ -708,6 +773,7 @@ function renderOrders(){
   $("#ordersBody").querySelectorAll(".seg .chip").forEach(c => c.onclick = () => { ofilter = c.dataset.f; renderOrders(); });
   $("#ordersBody").querySelectorAll(".ocard").forEach(c => c.onclick = () => editOrder(c.dataset.id));
   const sb = $("#shopUpcoming"); if (sb) sb.onclick = () => pickShopOrders(upcoming);
+  $("#openCustomers").onclick = openCustomers; $("#openReport").onclick = openReport;
   updateOrderBadge(); paintEye();
 }
 // Choose which upcoming orders to shop for; the next 7 days are ticked to start
@@ -741,13 +807,18 @@ function shopForOrders(list){
   saveState(); go("list");
   toast(`Shopping list made from ${list.length} order${list.length>1?"s":""}`, "Undo", () => { qty = prev.qty; checked = prev.checked; some = prev.some; saveState(); refreshAll(); });
 }
-function editOrder(oid){
+function editOrder(oid, preset){
   const isNew = !oid, src = isNew ? null : ORDERS().find(o => o.id === oid);
   if (!isNew && !src) return;
   const o = clone(src || {id:newId("o"), customer:"", due:"", items:[], paid:false, done:false, notes:""});
+  if (isNew && preset) { o.customer = preset.customer || ""; if (preset.method) o.method = preset.method; if (preset.kind) o.kind = preset.kind;
+    for (const it of preset.items || []) { const n = addItem(it.recipe); n.qty = it.qty; o.items.push(n); } }
+  const custNote = () => { const id = findCustomer(o.customer), c = id && CUSTOMERS()[id]; return c && c.notes ? `<div class="cnotecard"><b>Notes for ${esc(c.name)}</b>${esc(c.notes)}</div>` : ""; };
   const cakeOpts = sel => cakeIds().map(id => `<option value="${esc(id)}" ${id===sel?"selected":""}>${esc(db.recipes[id].name)}</option>`).join("");
   const body = () => `
-    <label class="field"><span>Customer</span><input id="o_cust" value="${esc(o.customer)}" placeholder="e.g. Maria"></label>
+    <label class="field"><span>Customer</span><input id="o_cust" value="${esc(o.customer)}" placeholder="e.g. Maria" list="o_custlist" autocomplete="off"></label>
+    <datalist id="o_custlist">${Object.values(CUSTOMERS()).map(c => `<option value="${esc(c.name)}"></option>`).join("")}</datalist>
+    <div id="o_cnote">${custNote()}</div>
     <label class="field"><span>Due date</span><input id="o_due" type="date" value="${esc(o.due)}"></label>
     <div class="field"><span>How they get it</span><div class="seg2">
       <button type="button" class="chip ${o.method==="pickup"?"on":""}" data-m="pickup">Pickup</button>
@@ -776,7 +847,12 @@ function editOrder(oid){
       <div class="prow2"><span>Your cost</span><b>${mm(orderCost(o))}</b></div>
       <div class="prow2 big"><span>Profit</span><b>${mm(orderTotal(o) - orderCost(o))}</b></div>
     </div>
-    <label class="toggle"><span>Paid</span><button class="switch ${o.paid?"on":""}" id="o_paid" role="switch"></button></label>`}
+    <div class="group paygroup"><h4>Payment</h4>
+      <label class="toggle"><span>Paid in full</span><button class="switch ${o.paid?"on":""}" id="o_paid" role="switch"></button></label>
+      ${o.paid ? "" : `<label class="field"><span>Deposit received <small>(optional)</small></span><div class="inl depinl"><em>$</em>${hideMoney ? `<input class="num masked" id="o_dep" value="•••" disabled data-v="${r2(num(o.deposit))}">` : `<input class="num" id="o_dep" inputmode="decimal" value="${num(o.deposit) > 0 ? r2(num(o.deposit)) : ""}" placeholder="0">`}</div></label>`}
+      <div class="field"><span>Paid with</span><div class="seg2 payseg">${Object.entries(PAY).map(([k, v]) => `<button type="button" class="chip ${o.pay===k?"on":""}" data-pay="${k}">${v}</button>`).join("")}</div></div>
+      <div class="prow2 big balrow"><span>Balance due</span><b class="${balanceDue(o) > 0.005 ? "warnc" : ""}">${mm(balanceDue(o))}</b></div>
+    </div>`}
     <label class="toggle"><span>Delivered<small>Moves it out of Upcoming</small></span><button class="switch ${o.done?"on":""}" id="o_done" role="switch"></button></label>
     <label class="field"><span>Notes <small>(optional)</small></span><input id="o_notes" value="${esc(o.notes||"")}" placeholder="e.g. Happy birthday writing, pickup 3pm"></label>
     <button class="primary" id="o_save">${isNew?"Save order":"Save"}</button>
@@ -786,6 +862,7 @@ function editOrder(oid){
   function grab(b){
     o.customer = b.querySelector("#o_cust").value.trim(); o.due = b.querySelector("#o_due").value; o.notes = b.querySelector("#o_notes").value.trim();
     b.querySelectorAll(".oitem").forEach(row => { const it = o.items[+row.dataset.i], pi = row.querySelector(".o_price"); if (pi) it.price = num(pi.dataset.v ?? pi.value); });
+    const dp = b.querySelector("#o_dep"); if (dp) { const v = num(dp.dataset.v ?? dp.value); if (v > 0) o.deposit = v; else delete o.deposit; }
   }
   function addItem(rid){ const r = db.recipes[rid]; const p = pricing(r); return {recipe: rid, name: r.name, qty: 1, price: Math.round(p.price), cost: r2(p.totalCost)}; }
   function mount(b, close, el){
@@ -809,16 +886,166 @@ function editOrder(oid){
     b.querySelectorAll("[data-m]").forEach(c => c.onclick = () => { o.method = o.method === c.dataset.m ? "" : c.dataset.m;
       b.querySelectorAll("[data-m]").forEach(x => x.classList.toggle("on", x.dataset.m === o.method)); });
     b.querySelectorAll("[data-k]").forEach(c => c.onclick = () => { grab(b); if (c.dataset.k) o.kind = c.dataset.k; else delete o.kind; re(); });
-    const pd = b.querySelector("#o_paid"); if (pd) pd.onclick = e => { o.paid = !o.paid; e.currentTarget.classList.toggle("on", o.paid); };
+    const pd = b.querySelector("#o_paid"); if (pd) pd.onclick = () => { grab(b); o.paid = !o.paid; re(); };
+    const dpi = b.querySelector("#o_dep"); if (dpi) dpi.onchange = () => re();
+    b.querySelectorAll("[data-pay]").forEach(c => c.onclick = () => { o.pay = o.pay === c.dataset.pay ? "" : c.dataset.pay; if (!o.pay) delete o.pay;
+      b.querySelectorAll("[data-pay]").forEach(x => x.classList.toggle("on", x.dataset.pay === o.pay)); });
     b.querySelector("#o_done").onclick = e => { o.done = !o.done; e.currentTarget.classList.toggle("on", o.done); };
+    b.querySelector("#o_cust").oninput = e => { o.customer = e.target.value; b.querySelector("#o_cnote").innerHTML = custNote(); };
     const save = () => { grab(b); if (!o.items.length) { toast("Add at least one cake"); return false; }
       if (!o.created) o.created = todayStr();
+      const cid = findOrMakeCustomer(o.customer); if (cid) o.customerId = cid; else delete o.customerId;
       const list = ORDERS(); if (!o.num) o.num = nextOrderNum();
       const k = list.findIndex(x => x.id === o.id); if (k >= 0) list[k] = o; else list.push(o); saveDb(); return true; };
     b.querySelector("#o_save").onclick = () => { if (save()) { close(); syncReminders(); toast(isNew ? "Order saved" : "Saved"); } };
     b.querySelector("#o_shop").onclick = () => { if (save()) { close(); shopForOrders([o]); } };
     b.querySelector("#o_rcpt").onclick = () => { if (save()) openReceipt(o.id); };
     const d = b.querySelector("#o_del"); if (d) confirmTap(d, "Tap again to delete", () => { db.orders = ORDERS().filter(x => x.id !== o.id); saveDb(); close(); syncReminders(); toast("Order deleted"); });
+  }
+}
+// ---------- CUSTOMERS ----------
+const CUSTOMERS = () => (db.customers = db.customers || {});
+const normName = s => String(s || "").trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ");
+function findCustomer(name){ const n = normName(name); if (!n) return null; return Object.keys(CUSTOMERS()).find(id => normName(CUSTOMERS()[id].name) === n) || null; }
+function findOrMakeCustomer(name){
+  name = String(name || "").trim(); if (!name) return null;
+  let id = findCustomer(name); if (!id) { id = newId("c"); CUSTOMERS()[id] = {name, phone:"", notes:""}; }
+  return id;
+}
+// Older data: make customers from the names already on orders, and keep new fields tidy
+function migrateDb(){
+  db.orders = db.orders || []; CUSTOMERS(); db.expenses = db.expenses || [];
+  for (const o of db.orders) if (!o.customerId || !CUSTOMERS()[o.customerId]) { const id = findOrMakeCustomer(o.customer); if (id) o.customerId = id; else delete o.customerId; }
+}
+const custOrders = cid => ORDERS().filter(o => o.customerId === cid).sort((a, b) => (b.due || "").localeCompare(a.due || ""));
+function custStats(cid){
+  const os = custOrders(cid), sold = os.filter(o => !isFree(o));
+  return {n: os.length, spent: sold.reduce((a, o) => a + orderTotal(o), 0), owes: sold.reduce((a, o) => a + balanceDue(o), 0), last: os[0] && os[0].due};
+}
+// Phone numbers: digits only; 10-digit numbers (PR/US) get the +1 for WhatsApp
+const telDigits = p => String(p || "").replace(/[^\d+]/g, "");
+const waLink = p => { let d = String(p || "").replace(/\D/g, ""); if (d.length === 10) d = "1" + d; return d ? `https://wa.me/${d}` : ""; };
+function openCustomers(){
+  let q = "";
+  openSheet("Customers", `
+    <label class="search insheet"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="cs_q" type="search" placeholder="Search name or phone" autocomplete="off"></label>
+    <div class="pickl" id="cs_list"></div>
+    <button class="primary" id="cs_new"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New customer</button>`, (b, close) => {
+    const paint = () => {
+      const ids = Object.keys(CUSTOMERS()).filter(id => { const c = CUSTOMERS()[id]; return !q || normName(c.name + " " + (c.phone || "")).includes(normName(q)); })
+        .sort((a, b) => { const la = custStats(a).last || "", lb = custStats(b).last || ""; return lb.localeCompare(la) || CUSTOMERS()[a].name.localeCompare(CUSTOMERS()[b].name); });
+      b.querySelector("#cs_list").innerHTML = ids.length ? ids.map(id => { const c = CUSTOMERS()[id], s = custStats(id);
+        return `<button class="pickrow custrow" data-id="${esc(id)}"><span class="cav" aria-hidden="true">${esc((c.name.trim()[0] || "?").toUpperCase())}</span>
+          <span class="picktxt"><b>${esc(c.name)}</b><small>${s.n} order${s.n===1?"":"s"}${s.spent ? ` · ${mm(s.spent)} spent` : ""}${s.last ? ` · last ${esc(fmtDay(s.last))}` : ""}${s.owes > 0.005 ? ` · <span class="warnc">owes ${mm(s.owes)}</span>` : ""}</small>
+          ${c.notes ? `<small class="cnote">${esc(c.notes)}</small>` : ""}</span></button>`; }).join("")
+        : `<div class="empty">${q ? "No one matches that." : "No customers yet. They’re added automatically when you save an order."}</div>`;
+      b.querySelectorAll(".custrow").forEach(r => r.onclick = () => openCustomer(r.dataset.id, paint));
+    };
+    b.querySelector("#cs_q").oninput = e => { q = e.target.value; paint(); };
+    b.querySelector("#cs_new").onclick = () => openCustomer(null, paint);
+    paint();
+  }, {tall:true});
+}
+function openCustomer(cid, after){
+  const isNew = !cid, c = isNew ? {name:"", phone:"", notes:""} : clone(CUSTOMERS()[cid]);
+  const os = isNew ? [] : custOrders(cid), s = isNew ? null : custStats(cid), lastSale = os.find(o => o.items.length);
+  openSheet(isNew ? "New customer" : "Customer", `
+    <label class="field"><span>Name</span><input id="cu_name" value="${esc(c.name)}" placeholder="e.g. María Rivera"></label>
+    <label class="field"><span>Phone <small>(optional)</small></span><input id="cu_phone" type="tel" inputmode="tel" value="${esc(c.phone || "")}" placeholder="787-555-0123"></label>
+    <label class="field"><span>Notes <small>(allergies, favorite cake, address…)</small></span><textarea id="cu_notes" rows="3" placeholder="e.g. Allergic to nuts · loves the strawberry">${esc(c.notes || "")}</textarea></label>
+    ${!isNew && c.phone ? `<div class="btnrow"><a class="ghostbtn" href="tel:${esc(telDigits(c.phone))}">Call</a><a class="ghostbtn" href="${esc(waLink(c.phone))}" target="_blank" rel="noopener">WhatsApp</a></div>` : ""}
+    <button class="primary" id="cu_save">${isNew ? "Save customer" : "Save"}</button>
+    ${isNew ? "" : `<div class="btnrow"><button class="ghostbtn" id="cu_order">New order</button>${lastSale ? `<button class="ghostbtn" id="cu_again">Repeat last order</button>` : ""}</div>
+    ${s.n ? `<div class="card cstats"><div><small>Orders</small><b>${s.n}</b></div><div><small>Spent</small><b>${mm(s.spent)}</b></div><div><small>Owes</small><b class="${s.owes > 0.005 ? "warnc" : ""}">${mm(s.owes)}</b></div></div>` : ""}
+    <div class="group"><h4>Their orders</h4>${os.length ? `<div class="pickl">${os.map(o => `<button class="pickrow corow" data-o="${esc(o.id)}"><span class="picktxt"><b>${esc(fmtDay(o.due) || "No date")}${isFree(o) ? ` · ${KIND_LABEL[o.kind]}` : ""}</b><small>${esc(orderLine(o))}${isFree(o) ? "" : ` · ${mm(orderTotal(o))}`}</small></span></button>`).join("")}</div>` : `<p class="small" style="margin:0">No orders yet.</p>`}</div>
+    <button class="ghostbtn danger" id="cu_del" style="width:100%">Delete customer</button>
+    <p class="small">Deleting keeps their orders; they just won’t be linked to a saved customer.</p>`}`, (b, close) => {
+    const save = () => {
+      const name = b.querySelector("#cu_name").value.trim(); if (!name) { toast("Give them a name"); return null; }
+      const other = findCustomer(name); if (other && other !== cid) { toast("There’s already a customer with that name"); return null; }
+      const id = cid || newId("c");
+      CUSTOMERS()[id] = {name, phone: b.querySelector("#cu_phone").value.trim(), notes: b.querySelector("#cu_notes").value.trim()};
+      for (const o of ORDERS()) if (o.customerId === id) o.customer = name;
+      saveDb(); return id;
+    };
+    b.querySelector("#cu_save").onclick = () => { if (save()) { close(); if (after) after(); toast("Saved"); if (view === "orders") renderOrders(); } };
+    if (!isNew) {
+      b.querySelector("#cu_order").onclick = () => { const id = save(); if (!id) return; close(); editOrder(null, {customer: CUSTOMERS()[id].name}); };
+      const ag = b.querySelector("#cu_again"); if (ag) ag.onclick = () => { const id = save(); if (!id) return; close();
+        editOrder(null, {customer: CUSTOMERS()[id].name, method: lastSale.method || "", kind: lastSale.kind, items: lastSale.items.filter(it => db.recipes[it.recipe]).map(it => ({recipe: it.recipe, qty: it.qty}))}); };
+      b.querySelectorAll(".corow").forEach(r => r.onclick = () => editOrder(r.dataset.o));
+      confirmTap(b.querySelector("#cu_del"), "Tap again to delete", () => {
+        delete CUSTOMERS()[cid]; for (const o of ORDERS()) if (o.customerId === cid) delete o.customerId;
+        saveDb(); close(); if (after) after(); toast("Customer deleted"); });
+    }
+  }, {tall: !isNew});
+}
+// ---------- BUSINESS REPORT ----------
+const EXP_CATS = ["Gas", "Equipment", "Packaging", "Ads", "Other"];
+const EXPENSES = () => (db.expenses = db.expenses || []);
+const ym = s => String(s || "").slice(0, 7);
+function openReport(){
+  let period = "month";
+  const now = new Date(), thisYm = todayStr().slice(0, 7);
+  const monthsBack = n => { const out = []; for (let i = n - 1; i >= 0; i--) { const d = new Date(now.getFullYear(), now.getMonth() - i, 1); out.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`); } return out; };
+  const inPeriod = day => { if (!day) return false; const k = ym(day);
+    if (period === "month") return k === thisYm; if (period === "3m") return monthsBack(3).includes(k);
+    if (period === "year") return k.slice(0, 4) === thisYm.slice(0, 4); return true; };
+  const body = () => {
+    const os = ORDERS().filter(o => inPeriod(o.due || o.created)), sold = os.filter(o => !isFree(o)), free = os.filter(isFree);
+    const exps = EXPENSES().filter(e => inPeriod(e.date)).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+    const sales = sold.reduce((a, o) => a + orderTotal(o), 0), cost = sold.reduce((a, o) => a + orderCost(o), 0);
+    const other = exps.reduce((a, e) => a + num(e.amount), 0), paid = sold.reduce((a, o) => a + amountPaid(o), 0);
+    const freeCost = free.reduce((a, o) => a + orderCost(o), 0), freeN = free.reduce((a, o) => a + o.items.reduce((b, it) => b + num(it.qty), 0), 0);
+    // best sellers
+    const by = {};
+    for (const o of sold) for (const it of o.items) { const k = it.recipe; by[k] = by[k] || {name: (db.recipes[k] && db.recipes[k].name) || it.name || "Cake", n: 0, rev: 0}; by[k].n += num(it.qty); by[k].rev += num(it.qty) * num(it.price); }
+    const best = Object.values(by).sort((a, b) => b.n - a.n || b.rev - a.rev).slice(0, 5);
+    // top customers
+    const bc = {};
+    for (const o of sold) { const k = o.customerId || normName(o.customer); if (!k) continue; bc[k] = bc[k] || {name: o.customer, rev: 0, n: 0}; bc[k].rev += orderTotal(o); bc[k].n++; }
+    const topc = Object.values(bc).sort((a, b) => b.rev - a.rev).slice(0, 3);
+    // monthly trend
+    const months = monthsBack(period === "year" || period === "all" ? 12 : 6).map(k => {
+      const mo = ORDERS().filter(o => !isFree(o) && ym(o.due || o.created) === k), s = mo.reduce((a, o) => a + orderTotal(o), 0);
+      const p = s - mo.reduce((a, o) => a + orderCost(o), 0) - EXPENSES().filter(e => ym(e.date) === k).reduce((a, e) => a + num(e.amount), 0);
+      const [yy, mmn] = k.split("-").map(Number); return {k, label: new Date(yy, mmn - 1, 1).toLocaleDateString(undefined, {month: "short"}), s, p};
+    });
+    const top = Math.max(1, ...months.map(x => x.s));
+    const chip = (k, t) => `<button type="button" class="chip ${period===k?"on":""}" data-p="${k}">${t}</button>`;
+    return `<div class="chips repchips">${chip("month","Month")}${chip("3m","3 months")}${chip("year","Year")}${chip("all","All")}</div>
+      <div class="card month repsum">
+        <div class="mgrid"><div><small>Sales</small><b>${mm(sales)}</b></div><div><small>Cakes cost</small><b>${mm(cost)}</b></div><div><small>Expenses</small><b>${mm(other)}</b></div></div>
+        <div class="reptrue"><span>True profit</span><b class="${sales - cost - other < 0 ? "warnc" : "hot"}">${mm(sales - cost - other)}</b></div>
+        <div class="msub">${sold.length} sale${sold.length===1?"":"s"} · Collected ${mm(paid)}${sales - paid > 0.005 ? ` · <span class="warnc">Still owed ${mm(sales - paid)}</span>` : ""}</div>
+        ${free.length ? `<div class="msub freesub">Gifts &amp; samples: ${freeN} cake${freeN===1?"":"s"} · cost you ${mm(freeCost)} (not in profit)</div>` : ""}
+      </div>
+      <div class="group"><h4>Month by month</h4>
+        <div class="bars">${months.map(x => `<div class="barrow"><span class="bl">${esc(x.label)}</span><span class="bt"><span class="bs" style="width:${Math.max(0, x.s / top * 100).toFixed(1)}%"></span><span class="bp" style="width:${Math.max(0, x.p / top * 100).toFixed(1)}%"></span></span><span class="bv">${x.s ? mm(x.s) : "—"}</span></div>`).join("")}</div>
+        <p class="small" style="margin:8px 0 0"><span class="lg lgs"></span>Sales <span class="lg lgp"></span>True profit</p></div>
+      <div class="group"><h4>Best sellers</h4>${best.length ? `<ol class="best">${best.map(x => `<li><b>${esc(x.name)}</b><span>${x.n} sold · ${mm(x.rev)}</span></li>`).join("")}</ol>` : `<p class="small" style="margin:0">No sales in this period yet.</p>`}</div>
+      ${topc.length ? `<div class="group"><h4>Top customers</h4><ol class="best">${topc.map(x => `<li><b>${esc(x.name || "No name")}</b><span>${x.n} order${x.n===1?"":"s"} · ${mm(x.rev)}</span></li>`).join("")}</ol></div>` : ""}
+      <div class="group"><h4>Other expenses</h4>
+        <p class="small" style="margin:0 0 10px">Gas, pans, packaging bought in bulk, ads… anything that isn’t already in a cake’s cost.</p>
+        ${exps.length ? `<div class="pickl">${exps.map(e => `<div class="pickrow exprow"><span class="picktxt"><b>${esc(e.what || e.cat)}</b><small>${esc(fmtDay(e.date))} · ${esc(e.cat)}</small></span><b class="expamt">${mm(num(e.amount))}</b><button class="icon odel" data-x="${esc(e.id)}" aria-label="Delete expense"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>`).join("")}</div>` : ""}
+        <div class="expform">
+          <div class="two"><label class="field"><span>What</span><input id="ex_what" placeholder="e.g. Gas for deliveries"></label>
+          <label class="field"><span>Amount</span><input id="ex_amt" inputmode="decimal" placeholder="0.00"></label></div>
+          <div class="two"><label class="field"><span>Date</span><input id="ex_date" type="date" value="${todayStr()}"></label>
+          <label class="field"><span>Type</span><select id="ex_cat">${EXP_CATS.map(c => `<option>${c}</option>`).join("")}</select></label></div>
+          <button class="ghostbtn" id="ex_add" style="width:100%"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add expense</button>
+        </div></div>`;
+  };
+  openSheet("Business report", body(), (b, close, el) => mount(b, close, el), {tall:true, onClose: () => { if (view === "orders") renderOrders(); }});
+  function mount(b, close, el){
+    const re = () => replaceSheetBody(el, body(), nb => mount(nb, close, el));
+    b.querySelectorAll("[data-p]").forEach(c => c.onclick = () => { period = c.dataset.p; re(); });
+    b.querySelector("#ex_add").onclick = () => {
+      const amount = num(b.querySelector("#ex_amt").value); if (!(amount > 0)) { toast("Enter the amount"); return; }
+      EXPENSES().push({id: newId("x"), date: b.querySelector("#ex_date").value || todayStr(), what: b.querySelector("#ex_what").value.trim(), cat: b.querySelector("#ex_cat").value, amount});
+      saveDb(); toast("Expense added"); re();
+    };
+    b.querySelectorAll("[data-x]").forEach(x => confirmTap(x, "Tap again to delete", () => { db.expenses = EXPENSES().filter(e => e.id !== x.dataset.x); saveDb(); re(); }));
   }
 }
 function updateOrderBadge(){
@@ -952,10 +1179,10 @@ const fmtLong = (s, L) => { const d = parseDay(s); return d ? d.toLocaleDateStri
 // Words on customer receipts and the price menu, in English and Spanish
 const RT = {
   en: {conf:"Order confirmation", cust:"Customer", delivery:"Delivery", pickup:"Pickup", ready:"Ready on", tbc:"To be confirmed", ordered:"Ordered",
-       each: x => `${x} each`, total:"Total", paid:"Paid in full ✓", due: x => `Balance due ${x}`, notes:"Notes", thanks:"Thank you for your order!",
+       each: x => `${x} each`, total:"Total", paid:"Paid in full ✓", deposit:"Deposit received", due: x => `Balance due ${x}`, notes:"Notes", thanks:"Thank you for your order!",
        menu:"Menu", whole:"Whole", per: w => w ? w.charAt(0).toUpperCase() + w.slice(1) : "Slice"},
   es: {conf:"Confirmación de orden", cust:"Cliente", delivery:"Entrega", pickup:"Para recoger", ready:"Lista el", tbc:"Por confirmar", ordered:"Fecha de orden",
-       each: x => `${x} c/u`, total:"Total", paid:"Pagado en su totalidad ✓", due: x => `Balance pendiente ${x}`, notes:"Notas", thanks:"¡Gracias por su orden!",
+       each: x => `${x} c/u`, total:"Total", paid:"Pagado en su totalidad ✓", deposit:"Depósito recibido", due: x => `Balance pendiente ${x}`, notes:"Notas", thanks:"¡Gracias por su orden!",
        menu:"Menú", whole:"Entero", per: w => ({slice:"Porción", brownie:"Brownie"})[String(w||"slice").toLowerCase()] || (w || "Porción")}
 };
 const rlang = () => BIZ().lang === "es" ? "es" : "en";
@@ -1044,8 +1271,10 @@ async function drawReceipt(o){
     rule(y - 14); y += 56;
     txt(T.total, L, y, `800 40px ${F}`, C.ink); txt(money(total), R, y, `800 52px ${F}`, C.berry, "right");
     y += 56;
-    // status pill
-    const st = o.paid ? T.paid : T.due(money(total));
+    // deposit line, then the status pill
+    const dep = amountPaid(o), payName = o.pay ? (Lg === "es" ? PAY_ES : PAY)[o.pay] : "";
+    if (!o.paid && dep > 0) { txt(T.deposit + (payName ? ` (${payName})` : ""), L, y + 6, `700 30px ${F}`, C.muted); txt(`−${money(dep)}`, R, y + 6, `700 30px ${F}`, C.muted, "right"); y += 34; }
+    const st = o.paid ? T.paid + (payName ? ` · ${payName}` : "") : T.due(money(balanceDue(o)));
     ctx.font = `800 30px ${F}`; const sw = ctx.measureText(st).width + 48;
     if (draw) { ctx.fillStyle = o.paid ? C.greenbg : C.amberbg; ctx.beginPath(); ctx.roundRect(R - sw, y, sw, 56, 28); ctx.fill(); }
     txt(st, R - sw/2, y + 38, `800 30px ${F}`, o.paid ? C.green : C.amber, "center");
@@ -1105,7 +1334,7 @@ const imgCache = {};
 function loadImg(src){ if (!src) return Promise.resolve(null); if (imgCache[src]) return imgCache[src];
   return imgCache[src] = new Promise(res => { const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = src; }); }
 // The photo the menu uses: your own, or (only while testing) the app's sample photo
-function menuPhoto(id, m){ const own = db.recipes[id] && db.recipes[id].photo; if (own) return own; return m.samples ? photoFor(id, "slice") : null; }
+function menuPhoto(id, m){ const own = ownPhoto(id); if (own) return own; return m.samples ? photoFor(id, "slice") : null; }
 // Draws the menu as pages of photo cards (2 across), each page 1080 wide, ready for an Instagram/WhatsApp carousel
 async function drawMenu(m){
   try { await Promise.all(["600","700","800"].map(w => document.fonts.load(`${w} 40px Nunito`))); } catch(e) {}
@@ -1191,7 +1420,7 @@ async function openMenu(){
   const m = MENU();
   let pages = await drawMenu(m);
   const imgs = () => pages.map((cv, i) => `<img class="receiptimg menupage" src="${cv.toDataURL("image/jpeg", .9)}" alt="Menu page ${i+1}">`).join("");
-  const anySample = () => menuIds().some(id => !m.off[id] && !db.recipes[id].photo && m.samples && photoFor(id, "slice"));
+  const anySample = () => menuIds().some(id => !m.off[id] && !ownPhoto(id) && m.samples && photoFor(id, "slice"));
   openSheet("Price menu", `
     ${langChips(rlang())}
     <div id="mn_warn"></div>
@@ -1214,7 +1443,7 @@ async function openMenu(){
       b.querySelector("#mn_list").innerHTML = menuIds().map(id => { const r = db.recipes[id], on = !m.off[id], auto = pricing(r).price;
         return `<div class="pickrow menurow ${on?"on":""}" data-id="${esc(id)}">
           <button class="pickhit" aria-label="Show or hide ${esc(r.name)}"><span class="pickbox" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
-          <span class="picktxt"><b>${esc(r.name)}</b><small>${r.photo ? "Your photo ✓" : "No photo of yours yet"} · ${auto > 0 ? `selling ${money(auto)}` : "no price yet"}</small></span></button>
+          <span class="picktxt"><b>${esc(r.name)}</b><small>${ownPhoto(id) ? "Your photo ✓" : "No photo of yours yet"} · ${auto > 0 ? `selling ${money(auto)}` : "no price yet"}</small></span></button>
           <label class="mnprice"><span>$</span><input inputmode="decimal" data-p="${esc(id)}" value="${num(m.price[id]) > 0 ? r2(m.price[id]) : ""}" placeholder="${auto > 0 ? Math.ceil(auto) : "0"}" aria-label="Menu price for ${esc(r.name)}"></label></div>`; }).join("");
       b.querySelectorAll(".pickhit").forEach(h => h.onclick = () => { const id = h.parentElement.dataset.id; if (m.off[id]) delete m.off[id]; else m.off[id] = true; save(); h.parentElement.classList.toggle("on", !m.off[id]); redraw(); });
       b.querySelectorAll("[data-p]").forEach(inp => inp.oninput = () => { const v = num(inp.value); if (v > 0) m.price[inp.dataset.p] = v; else delete m.price[inp.dataset.p]; save(); redraw(); });
@@ -1277,7 +1506,10 @@ function editBusiness(done){
 }
 
 // ---------- SETTINGS: backup / restore / reset ----------
-function backupPayload(){ return {app:"CakeCart", backupVersion:1, savedAt:new Date().toISOString(), db, have}; }
+function backupPayload(){
+  const photos = {}; for (const id of Object.keys(db.recipes)) { const p = Photos.get(id); if (p) photos[id] = p; }
+  return {app:"CakeCart", backupVersion:2, savedAt:new Date().toISOString(), db, have, photos};
+}
 function openSettings(){
   const last = store.get("lastBackup", null);
   const nR = Object.values(db.recipes).length, nI = Object.values(db.ingredients).filter(i=>!i.madeFrom).length;
@@ -1320,7 +1552,7 @@ function openSettings(){
       const name = `CakeCart-backup-${new Date().toISOString().slice(0,10)}.json`;
       const blob = new Blob([JSON.stringify(backupPayload(), null, 1)], {type:"application/json"});
       if (IS_APP) {
-        try { await Native.shareFile(name, blob, "CakeCart backup"); store.set("lastBackup", Date.now()); Native.syncBackupReminder(Date.now()); toast("Backup ready. Save it to Drive or send it to yourself."); close(); }
+        try { await Native.shareFile(name, blob, "CakeCart backup"); store.set("lastBackup", Date.now()); renderNudges(); Native.syncBackupReminder(Date.now()); toast("Backup ready. Save it to Drive or send it to yourself."); close(); }
         catch(e) { if (!/cancel/i.test(e && e.message || "")) toast("Couldn’t save the backup: " + (e.message || e)); }
         return;
       }
@@ -1333,22 +1565,26 @@ function openSettings(){
           catch(e) { if (e && e.name === "AbortError") return; }
         }
         if (!shared) { const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); }
-        store.set("lastBackup", Date.now()); toast(shared ? "Backup saved" : "Backup saved to your Downloads folder"); close();
+        store.set("lastBackup", Date.now()); renderNudges(); toast(shared ? "Backup saved" : "Backup saved to your Downloads folder"); close();
       } catch(e) { if (e && e.name !== "AbortError") toast("Couldn’t save the backup: " + (e.message || e)); }
     };
     b.querySelector("#b_file").onchange = e => {
       const f = e.target.files[0]; if (!f) return;
       const rd = new FileReader();
-      rd.onload = () => { try {
+      rd.onload = async () => { try {
           const data = JSON.parse(rd.result);
           if (data.app !== "CakeCart" || !data.db || !data.db.recipes || !data.db.ingredients) throw new Error("This isn’t a CakeCart backup file.");
-          db = data.db; have = data.have || {}; checked = {}; mergeDefaults(); cleanQty(); saveDb(); saveState(); close(); refreshAll();
+          db = data.db; have = data.have || {}; checked = {}; mergeDefaults();
+          const photos = data.photos || {};
+          for (const [id, r] of Object.entries(db.recipes)) if (r.photo) { photos[id] = r.photo; delete r.photo; }
+          try { await Photos.replaceAll(photos); } catch(e) { for (const [id, p] of Object.entries(photos)) if (db.recipes[id]) db.recipes[id].photo = p; }
+          migrateDb(); cleanQty(); saveDb(); saveState(); close(); refreshAll();
           syncReminders(); toast(`Restored ${Object.keys(db.recipes).length} recipes`);
         } catch(err) { toast(err.message || "Couldn’t read that file."); } };
       rd.readAsText(f);
     };
     confirmTap(b.querySelector("#b_reset"), "Tap again to reset everything", () => {
-      const keepOrders = db.orders || [], keepBiz = db.business; db = clone(DEFAULTS); if (keepBiz) db.business = keepBiz; db.deleted = {recipes:[], ingredients:[]}; db.orders = keepOrders; saveDb(); cleanQty(); saveState(); close(); refreshAll(); toast("Back to the original data"); });
+      const keepOrders = db.orders || [], keepBiz = db.business, keepCust = db.customers || {}, keepExp = db.expenses || []; db = clone(DEFAULTS); if (keepBiz) db.business = keepBiz; db.deleted = {recipes:[], ingredients:[]}; db.orders = keepOrders; db.customers = keepCust; db.expenses = keepExp; migrateDb(); saveDb(); cleanQty(); saveState(); close(); refreshAll(); toast("Back to the original data"); });
   });
 }
 
@@ -1356,7 +1592,7 @@ function openSettings(){
 let view = "cakes";
 function refreshAll(){
   cleanQty(); updateChrome();
-  if (view === "cakes") { renderCats(); renderCakes(); }
+  if (view === "cakes") { renderNudges(); renderCats(); renderCakes(); }
   if (view === "list") renderList();
   if (view === "recipes") renderRecipes();
   if (view === "ingredients") renderIngredients();
@@ -1390,7 +1626,9 @@ $("#openSettings").onclick = openSettings;
 $("#clearCakes").onclick = clearCakes;
 document.addEventListener("keydown", e => { if (e.key === "Escape" && sheetStack.length) sheetStack[sheetStack.length-1].querySelector(".close").click(); });
 
+migrateDb();
 refreshAll();
+startPhotos();
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 if (IS_APP) { Native.hookBack(); Native.setup().then(() => { syncReminders(); Native.syncBackupReminder(store.get("lastBackup", null)); }); setTimeout(() => checkUpdate(false), 2500); }
 if (!IS_APP && "serviceWorker" in navigator && location.protocol.startsWith("http")) {
