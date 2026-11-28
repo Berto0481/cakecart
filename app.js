@@ -1426,7 +1426,7 @@ const MENU = () => { const m = store.get("menu", {}); m.off = m.off || {}; m.pri
 const menuIds = () => cakeIds();
 const fmtP = v => Math.abs(v - Math.round(v)) < 0.005 ? `$${Math.round(v)}` : money(v);
 function menuPrice(id, m){ const p = num(m.price[id]); if (p > 0) return p; const c = pricing(db.recipes[id]).price; return c > 0 ? Math.ceil(c) : 0; }
-const slicePrice = (r, whole) => num(r.pieces) > 0 && whole > 0 ? Math.ceil(whole / num(r.pieces) * 4) / 4 : 0;
+const slicePrice = (r, whole) => num(r.pieces) > 0 && whole > 0 ? Math.ceil(whole / num(r.pieces) - 0.005) : 0;
 const imgCache = {};
 function loadImg(src){ if (!src) return Promise.resolve(null); if (imgCache[src]) return imgCache[src];
   return imgCache[src] = new Promise(res => { const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = src; }); }
@@ -1491,7 +1491,7 @@ async function drawMenu(m){
       const by = y + cardH - 22;
       txt(fmtP(it.whole), tx, by, `800 38px ${F}`, C.berry);
       const sp = m.slices ? slicePrice(it.r, it.whole) : 0;
-      txt(sp ? `${T.per(it.r.piece)} ${money(sp)}` : sizeLine(it.r, Lg).split(" · ")[0], tr, by - 2, `700 23px ${F}`, C.muted, "right");
+      txt(sp ? `${T.per(it.r.piece)} ${fmtP(sp)}` : sizeLine(it.r, Lg).split(" · ")[0], tr, by - 2, `700 23px ${F}`, C.muted, "right");
     });
     if (!items.length) txt(Lg === "es" ? "Añade precios para ver el menú" : "Add prices to see your menu", W/2, H/2, `700 32px ${F}`, C.muted, "center");
     // footer
@@ -1526,7 +1526,7 @@ async function openMenu(){
     <div class="btnrow"><button class="ghostbtn" id="mn_save">Save images</button><button class="ghostbtn" id="mn_biz">Name &amp; logo</button></div>
     <div class="group" style="margin-top:18px"><h4>What's on it</h4>
       <div class="field"><span>Cakes per page</span><div class="seg2"><button type="button" class="chip ${m.per===4?"on":""}" data-per="4">4 · for posts</button><button type="button" class="chip ${m.per===6?"on":""}" data-per="6">6 · for stories</button></div></div>
-      <label class="toggle"><span>Show slice prices<small>Whole price ÷ slices, rounded up to 25¢</small></span><button class="switch ${m.slices?"on":""}" id="mn_sl" role="switch"></button></label>
+      <label class="toggle"><span>Show slice prices<small>Whole price ÷ slices, rounded up to the dollar</small></span><button class="switch ${m.slices?"on":""}" id="mn_sl" role="switch"></button></label>
       <label class="toggle"><span>Show the whole photo<small>Nothing cut off; off fills the card edge to edge</small></span><button class="switch ${m.fit?"on":""}" id="mn_fit" role="switch"></button></label>
       <label class="toggle"><span>Use sample photos for testing<small>Fills in cakes that don’t have your own photo yet</small></span><button class="switch ${m.samples?"on":""}" id="mn_smp" role="switch"></button></label>
       <label class="field"><span>Note at the bottom <small>(optional)</small></span><input id="mn_note" value="${esc(m.note)}" placeholder="e.g. Order 3 days ahead · Delivery in Ponce"></label>
@@ -1602,6 +1602,9 @@ function openPricingSettings(){
 const FORM_HOME = "https://berto0481.github.io/cakecart/order.html";
 const b64e = s => btoa(unescape(encodeURIComponent(s))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const b64d = s => decodeURIComponent(escape(atob(String(s).replace(/-/g, "+").replace(/_/g, "/"))));
+// Your shop's folder on the CakeCart site, where your logo and cake photos for the order form are hosted
+const slugify = t => String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+const shopSlug = () => slugify(BIZ().name || "cakecart");
 const FORM = () => { const f = store.get("form", {}); if (f.days == null) f.days = 3; if (f.delivery == null) f.delivery = true; return f; };
 function formLink(){
   const m = MENU(), f = FORM(), biz = BIZ();
@@ -1611,9 +1614,10 @@ function formLink(){
     // your own menu price is scaled for other sizes; otherwise each size uses its suggested price, rounded up like the menu
     const custom = num(m.price[id]) > 0, sizePrice = op => op.base ? whole : custom ? Math.ceil(base > 0 ? whole * pricing(r, op.k).price / base : whole * op.k) : Math.ceil(pricing(r, op.k).price - 0.005);
     const sz = ops.length ? ops.map(op => [op.label, sizePrice(op), op.base ? 1 : 0]) : whole;
-    return [id, r.name, r.nameEs || "", sz];
+    const sample = m.samples ? photoFor(id, "slice") : "";
+    return [id, r.name, r.nameEs || "", sz, sample && !/^data:/.test(sample) ? sample : ""];
   }).filter(Boolean);
-  const data = {v: 1, b: biz.name || "CakeCart", w: telDigits(biz.whatsapp || ""), l: rlang(), d: num(f.days), f: f.delivery ? num(biz.deliveryFee) : -1,
+  const data = {v: 2, s: shopSlug(), b: biz.name || "CakeCart", w: telDigits(biz.whatsapp || ""), l: rlang(), d: num(f.days), f: f.delivery ? num(biz.deliveryFee) : -1,
     a: ADDONS().map(a => [a.id, a.name, num(a.price)]), c: cakes};
   const home = !IS_APP && location.protocol.startsWith("http") ? new URL("order.html", location.href).href : FORM_HOME;
   return {url: `${home}#d=${b64e(JSON.stringify(data))}`, n: cakes.length};
@@ -1626,7 +1630,8 @@ function openOrderForm(){
     <div class="two"><label class="field"><span>Days of notice needed</span><input id="of_days" inputmode="numeric" value="${num(f.days)}"></label>
     <div class="field"><span>Form language</span>${langChips(rlang())}</div></div>
     <label class="toggle"><span>Offer delivery<small>${num(biz.deliveryFee) ? `Fee ${money(num(biz.deliveryFee))}` : "No fee set"} · change it in Pricing extras</small></span><button class="switch ${f.delivery?"on":""}" id="of_del" role="switch"></button></label>
-    <div class="card note2">${n} cake${n===1?"":"s"} with the prices from your <b>Price menu</b>${ADDONS().length ? ` and ${ADDONS().length} add-on${ADDONS().length===1?"":"s"}` : ""}. Sizes are priced from your recipes.</div>
+    <div class="card note2">${n} cake${n===1?"":"s"} with the prices from your <b>Price menu</b>${ADDONS().length ? ` and ${ADDONS().length} add-on${ADDONS().length===1?"":"s"}` : ""}. Sizes are priced from your recipes. Your logo and cake photos show on the form once they’re added to your CakeCart site.</div>
+    ${MENU().samples ? `<div class="mnwarn"><b>Testing only.</b> The form will show the app’s sample photos (from Sugar Spun Run and Tastes Better From Scratch) for cakes without your own photo. Turn off “Use sample photos for testing” in the Price menu before sharing it with customers.</div>` : ""}
     ${telDigits(biz.whatsapp || "") ? `<button class="primary" id="of_share"><svg viewBox="0 0 24 24"><path d="M12 15V3M7 8l5-5 5 5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>Share the link</button>
     <div class="btnrow"><button class="ghostbtn" id="of_copy">Copy link</button><button class="ghostbtn" id="of_open">Try it yourself</button></div>
     <p class="small">Change a price, cake or setting? Share the link again; old links keep the old prices.</p>` : `<p class="warn">Add your WhatsApp number above to make the link.</p>`}`; };
