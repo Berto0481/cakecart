@@ -451,3 +451,16 @@ textarea{font:inherit}
 .depinl input{flex:1}
 .repchips{display:flex;flex-wrap:nowrap}
 .repchips .chip{flex:1;padding-left:6px;padding-right:6px}
+
+.minichips{margin:8px 0 2px;flex-wrap:wrap;overflow:visible}
+.minichips .chip{padding:7px 12px;font-size:13px;min-height:36px}
+.minichips .chip small{font-weight:700;opacity:.75}
+.addrow{display:grid;grid-template-columns:1fr 104px 40px;gap:8px;align-items:center;margin-bottom:8px}
+.addrow .ad_name{height:44px;border:1px solid var(--line);border-radius:12px;padding:0 12px;font:inherit;font-size:15px;background:var(--cream);min-width:0}
+.addrow .inl input{width:100%}
+.linkish.sm{font-size:12px;padding:0;color:var(--berry);font-weight:800}
+
+.obtns{gap:8px}
+.obtns .ghostbtn{padding-left:6px;padding-right:6px;font-size:13.5px;gap:6px}
+.bakeday.late h4{color:var(--berry)}
+.bpshop{margin-top:4px}

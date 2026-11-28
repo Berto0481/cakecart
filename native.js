@@ -133,6 +133,7 @@ const Native = (() => {
       await SH().share({title, files: [w.uri], dialogTitle: title});
     },
 
+    async shareText(text, url){ await SH().share({text, url, dialogTitle: "Share"}); },
     async shareFiles(list, title){
       const uris = [];
       for (const f of list) {

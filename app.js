@@ -123,11 +123,34 @@ function recipeCost(r, seen = new Set()){
   }
   return {total, missing:[...missing]};
 }
-function pricing(r){
-  const c = recipeCost(r), pack = num(r.packaging), totalCost = c.total + pack;
-  const price = totalCost * num(r.markup), per = num(r.pieces) > 0 ? price / num(r.pieces) : 0;
-  return {ing:c.total, missing:c.missing, pack, totalCost, price, profit: price - totalCost, per};
+// Suggested price = (ingredients + packaging) × markup + your time (hands-on hours × your hourly rate).
+// k scales the ingredients for a bigger or smaller size (1 = the recipe as written).
+const RATE = () => num(db.business && db.business.rate);
+function pricing(r, k = 1){
+  const c = recipeCost(r), ing = c.total * k, pack = num(r.packaging), totalCost = ing + pack;
+  const hours = num(r.hours), labor = hours * RATE();
+  const price = totalCost * num(r.markup) + labor, pieces = num(r.pieces) * k, per = pieces > 0 ? price / pieces : 0;
+  return {ing, missing:c.missing, pack, totalCost, price, profit: price - totalCost, per, hours, labor, extra: price - totalCost - labor};
 }
+// Sizes a cake can be ordered in, worked out from the size the recipe is written for
+function sizeOptions(r){
+  if (!r || r.sub) return [];
+  const size = String(r.size || ""), round = size.match(/(\d+(?:\.\d+)?)\s*(?:"|”|in\b|inch)/i), pan = size.match(/(\d+)\s*[×x]\s*(\d+)/);
+  if (r.cat === "Cheesecakes" || (round && !pan)) {
+    const base = round ? num(round[1]) : 9;
+    return [6, 8, 9, 10, 12].filter(d => d === base || Math.abs(d - base) >= 1).map(d => ({label: `${d}"`, k: (d / base) ** 2, base: d === base}));
+  }
+  if (pan) {
+    const baseA = num(pan[1]) * num(pan[2]), pans = [[8,8],[9,9],[9,13]];
+    if (!pans.some(([a,b]) => a*b === baseA)) pans.push([num(pan[1]), num(pan[2])]);
+    return pans.map(([a,b]) => ({label: `${a}×${b}`, k: (a*b) / baseA, base: a*b === baseA}));
+  }
+  return [];
+}
+const baseSize = r => (sizeOptions(r).find(o => o.base) || {label: ""}).label;
+// Add-ons you charge extra for (writing, extra fruit…), set up in Settings
+const ADDONS = () => (db.addons = db.addons || []);
+const fmtQ = q => Number.isInteger(num(q)) ? String(num(q)) : (Math.round(num(q) * 10) / 10).toString();
 const usedIn = id => Object.values(db.recipes).filter(r => r.sections.some(s => s.items.some(i => i.ing === id)));
 
 // Whole packages at your store price
@@ -268,7 +291,7 @@ function renderCakes(){
       <div class="cinfo"><h3>${esc(r.name)}</h3><p>${esc(r.desc||"")}${r.per==="pan"?" · per pan":""}</p></div>
       <div class="stepper">
         <button class="minus" aria-label="One less" ${k?"":"disabled"}><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
-        <output>${k}</output>
+        <output>${fmtQ(k)}</output>
         <button class="plus" aria-label="One more"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
       </div></div>`; }).join("");
   el.querySelectorAll(".cake").forEach(row => { const id = row.dataset.id;
@@ -277,19 +300,19 @@ function renderCakes(){
 }
 function setQty(id, k){ if (k > 0) qty[id] = k; else delete qty[id]; checked = {}; some = {}; saveState(); renderCakes(); updateChrome(); }
 function cleanQty(){ for (const id of Object.keys(qty)) if (!db.recipes[id] || db.recipes[id].sub) delete qty[id]; }
-const totalCakes = () => Object.values(qty).reduce((a,b)=>a+b,0);
+const totalCakes = () => r2(Object.values(qty).reduce((a,b)=>a+b,0));
 function updateChrome(){
   const t = totalCakes();
   $("#cta").classList.toggle("hide", !t);
-  $("#ctaText").textContent = t ? `Make shopping list · ${t} selected` : "Make shopping list";
-  const b = $("#listBadge"); b.textContent = t; b.classList.toggle("show", !!t);
+  $("#ctaText").textContent = t ? `Make shopping list · ${fmtQ(t)} selected` : "Make shopping list";
+  const b = $("#listBadge"); b.textContent = fmtQ(t); b.classList.toggle("show", !!t);
   $("#clearCakes").classList.toggle("idle", !t);
 }
 function clearCakes(){
   const t = totalCakes(); if (!t) return;
   const prevQty = {...qty}, prevChecked = {...checked}, prevSome = {...some};
   qty = {}; checked = {}; some = {}; saveState(); if (cat === "Selected") { cat = "All"; renderCats(); } renderCakes(); updateChrome();
-  toast(`Cleared ${t} cake${t>1?"s":""}`, "Undo", () => { qty = prevQty; checked = prevChecked; some = prevSome; saveState(); renderCakes(); updateChrome(); });
+  toast(`Cleared ${fmtQ(t)} cake${t>1?"s":""}`, "Undo", () => { qty = prevQty; checked = prevChecked; some = prevSome; saveState(); renderCakes(); updateChrome(); });
 }
 
 // ---------- SHOPPING LIST ----------
@@ -331,7 +354,7 @@ function renderList(){
       <div class="stat"><svg viewBox="0 0 24 24"><path d="M3 4h2l2.4 11h10.2L20 8H7"/><circle cx="9" cy="19.5" r="1.5"/><circle cx="17" cy="19.5" r="1.5"/></svg><div><b>${toBuy.length}</b><small>To buy</small></div></div>
       <div class="stat"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M15 9.5c-.5-1-1.6-1.5-3-1.5-1.7 0-3 .8-3 2s1.3 1.7 3 2 3 .8 3 2-1.3 2-3 2c-1.4 0-2.5-.5-3-1.5M12 6v2M12 16v2"/></svg><div><b>~$${Math.round(bill)}</b><small>Est. total</small></div></div>
     </div>
-    <div class="order"><b>Order:</b> ${Object.entries(qty).filter(([id])=>db.recipes[id]).map(([id,k]) => `${k} × ${esc(short(db.recipes[id]))}`).join(" · ")}</div>
+    <div class="order"><b>Order:</b> ${Object.entries(qty).filter(([id])=>db.recipes[id]).map(([id,k]) => `${fmtQ(k)} × ${esc(short(db.recipes[id]))}`).join(" · ")}</div>
     <div class="card progress"><div class="row"><span>In the cart: <b>${inCart}</b> of <b>${toBuy.length}</b></span><span>${pct}%</span></div><div class="track"><div class="fill" style="width:${pct}%"></div></div></div>
     <div class="seg">
       <button class="chip ${filter==="all"?"on":""}" data-f="all">All (${ids.length})</button>
@@ -450,9 +473,11 @@ function recipeHtml(id){
       <div class="prow2"><span>Ingredients</span><b>${money(p.ing)}</b></div>
       <div class="prow2"><span>Packaging &amp; other<small>Box, board, oven energy…</small></span><span class="inl"><em>$</em><input class="num" id="f_pack" inputmode="decimal" value="${r2(num(r.packaging))}"></span></div>
       <div class="prow2 line"><span>Total cost</span><b>${money(p.totalCost)}</b></div>
-      <div class="prow2"><span>Markup<small>Price = cost × markup</small></span><span class="inl"><input class="num" id="f_markup" inputmode="decimal" value="${r2(num(r.markup))}"><em>×</em></span></div>
+      <div class="prow2"><span>Markup<small>Cost × markup</small></span><span class="inl"><input class="num" id="f_markup" inputmode="decimal" value="${r2(num(r.markup))}"><em>×</em></span></div>
+      <div class="prow2"><span>Your time<small>${RATE() ? `Hands-on hours × ${money(RATE())}/h` : `<button class="linkish sm" id="f_rate">Set your hourly rate</button>`}</small></span><span class="inl"><input class="num" id="f_hours" inputmode="decimal" value="${num(r.hours) ? r2(num(r.hours)) : ""}" placeholder="0"><em>h</em></span></div>
+      ${p.labor ? `<div class="prow2"><span>Pays you</span><b>${money(p.labor)}</b></div>` : ""}
       <div class="prow2 big"><span>Suggested price<small>Whole ${esc(r.size||r.per||"cake")}</small></span><b class="hot">${money(p.price)}</b></div>
-      <div class="prow2"><span>Profit</span><b>${money(p.profit)}</b></div>
+      <div class="prow2"><span>Profit${p.labor ? `<small>Your pay ${money(p.labor)} + ${money(p.extra)} extra</small>` : ""}</span><b>${money(p.profit)}</b></div>
       <div class="prow2"><span>${esc((r.piece||"slice").replace(/^./,c=>c.toUpperCase()))}s</span><span class="inl"><input class="num" id="f_pieces" inputmode="numeric" value="${num(r.pieces)}"></span></div>
       <div class="prow2 big"><span>Price per ${esc(r.piece||"slice")}</span><b class="hot">${money(p.per)}</b></div>
     </div>`;
@@ -486,7 +511,8 @@ function mountRecipe(id, body, close, el){
   const r = db.recipes[id], rerender = () => replaceSheetBody(el, recipeHtml(id), b => mountRecipe(id, b, close, el));
   const bindNum = (sel, key) => { const i = body.querySelector(sel); if (!i) return;
     i.onchange = () => { r[key] = num(i.value); saveDb(); rerender(); }; };
-  bindNum("#f_pack","packaging"); bindNum("#f_markup","markup"); bindNum("#f_pieces","pieces"); bindNum("#f_yield","yield");
+  bindNum("#f_pack","packaging"); bindNum("#f_markup","markup"); bindNum("#f_pieces","pieces"); bindNum("#f_yield","yield"); bindNum("#f_hours","hours");
+  const fr = body.querySelector("#f_rate"); if (fr) fr.onclick = () => openPricingSettings();
   body.querySelectorAll(".line").forEach(b => b.onclick = () => editLine(id, +b.dataset.s, +b.dataset.i, rerender));
   body.querySelectorAll("[data-add]").forEach(b => b.onclick = () => editLine(id, +b.dataset.add, -1, rerender));
   body.querySelectorAll("[data-sec]").forEach(b => b.onclick = () => editSection(id, +b.dataset.sec, rerender));
@@ -542,7 +568,8 @@ function editRecipeDetails(id, done){
            <label class="field"><span>Unit</span><select id="d_yu">${["ml","g","each"].map(u=>`<option ${(v.yieldUnit||"ml")===u?"selected":""}>${u}</option>`).join("")}</select></label></div>
            <p class="small" style="margin:0 0 12px">It becomes an ingredient you can add to other recipes, priced from this recipe.</p>`
         : `<div class="two"><label class="field"><span>Sold as</span><input id="d_size" value="${esc(v.size || (pan?"9×9 pan":tira?"8×8 dish":"9\" cheesecake"))}"></label>
-           <label class="field"><span>Cut into</span><input id="d_piece" value="${esc(v.piece || (pan?"brownie":"slice"))}"></label></div>`;
+           <label class="field"><span>Cut into</span><input id="d_piece" value="${esc(v.piece || (pan?"brownie":"slice"))}"></label></div>
+           <label class="field"><span>Bake it how many days before it’s due? <small>(for the bake plan; 1 = the day before, for chilling)</small></span><input id="d_lead" inputmode="numeric" value="${v.lead != null ? num(v.lead) : (v.cat === "Other" ? 0 : 1)}"></label>`;
     };
     b.querySelector("#d_cat").onchange = () => { more(); paintP(); }; more(); paintP();
     b.querySelector("#d_save").onclick = async () => {
@@ -561,6 +588,7 @@ function editRecipeDetails(id, done){
       } else {
         delete rec.sub; rec.cat = type; rec.per = type === "Brownies" || type === "Tiramisu" ? "pan" : type === "Cheesecakes" ? "cheesecake" : (rec.per && rec.per !== "cheesecake" ? rec.per : "cake");
         rec.size = b.querySelector("#d_size").value.trim(); rec.piece = b.querySelector("#d_piece").value.trim() || "slice";
+        const ld = b.querySelector("#d_lead"); if (ld) rec.lead = Math.max(0, Math.round(num(ld.value)));
         if (rec.markup == null) rec.markup = 3; if (rec.pieces == null) rec.pieces = 12; if (rec.packaging == null) rec.packaging = 0;
       }
       db.recipes[rid] = rec;
@@ -729,7 +757,8 @@ const ORDERS = () => (db.orders = db.orders || []);
 const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; };
 const parseDay = s => { const [y,m,d] = (s||"").split("-").map(Number); return y ? new Date(y, m-1, d) : null; };
 const fmtDay = s => { const d = parseDay(s); return d ? d.toLocaleDateString(undefined, {weekday:"short", month:"short", day:"numeric"}) : "No date"; };
-const orderTotal = o => o.items.reduce((a, it) => a + num(it.price) * num(it.qty), 0);
+const orderTotal = o => o.items.reduce((a, it) => a + num(it.price) * num(it.qty), 0) + (o.method === "delivery" ? num(o.fee) : 0);
+const sizeTag = it => { const r = db.recipes[it.recipe]; return it.size && r && it.size !== baseSize(r) ? it.size : ""; };
 const orderCost = o => o.items.reduce((a, it) => a + num(it.cost) * num(it.qty), 0);
 // Gifts and samples: you still bake (and shop for) them, but they're not sales, so they stay out of profit
 const isFree = o => o.kind === "gift" || o.kind === "sample";
@@ -738,7 +767,7 @@ const PAY = {cash:"Cash", ath:"ATH Móvil", card:"Card", other:"Other"}, PAY_ES 
 const amountPaid = o => isFree(o) ? 0 : o.paid ? orderTotal(o) : Math.min(num(o.deposit), orderTotal(o));
 const balanceDue = o => isFree(o) ? 0 : Math.max(0, orderTotal(o) - amountPaid(o));
 const KIND_LABEL = {gift: "Gift", sample: "Sample"};
-const orderLine = o => o.items.map(it => `${it.qty} × ${(db.recipes[it.recipe]?.name || it.name || "Cake").replace(/ Cheesecake$/,"")}`).join(" · ");
+const orderLine = o => o.items.map(it => `${it.qty} × ${(db.recipes[it.recipe]?.name || it.name || "Cake").replace(/ Cheesecake$/,"")}${sizeTag(it) ? ` ${sizeTag(it)}` : ""}${(it.addons||[]).length ? " +" + it.addons.length : ""}`).join(" · ");
 function daysUntil(s){ const d = parseDay(s); if (!d) return null; const t = parseDay(todayStr()); return Math.round((d - t) / 86400000); }
 function dueLabel(o){
   if (o.done) return `<span class="badge done">Delivered</span>`;
@@ -772,7 +801,7 @@ function renderOrders(){
       ${monthExp ? `<div class="msub">Other expenses ${mm(monthExp)} · <b>after expenses ${mm(sales - cost - monthExp)}</b></div>` : ""}
     </div>`;
   if (upcoming.length) h += `<button class="primary shopbtn" id="shopUpcoming"><svg viewBox="0 0 24 24"><path d="M3 4h2l2.4 11h10.2L20 8H7"/><circle cx="9" cy="19.5" r="1.5"/><circle cx="17" cy="19.5" r="1.5"/></svg>Shop for upcoming orders</button>`;
-  h += `<div class="btnrow obtns"><button class="ghostbtn" id="openCustomers"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.5a6.5 6.5 0 0 1 3.5 5.5"/></svg>Customers</button><button class="ghostbtn" id="openReport"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Report</button></div>`;
+  h += `<div class="btnrow obtns"><button class="ghostbtn" id="openCustomers"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.5a6.5 6.5 0 0 1 3.5 5.5"/></svg>Customers</button><button class="ghostbtn" id="openReport"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Report</button><button class="ghostbtn" id="openBake"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>Bake plan</button></div>`;
   h += `<div class="seg">
       <button class="chip ${ofilter==="upcoming"?"on":""}" data-f="upcoming">Upcoming (${upcoming.length})</button>
       <button class="chip ${ofilter==="done"?"on":""}" data-f="done">Delivered (${all.length-upcoming.length})</button>
@@ -793,7 +822,7 @@ function renderOrders(){
   $("#ordersBody").querySelectorAll(".seg .chip").forEach(c => c.onclick = () => { ofilter = c.dataset.f; renderOrders(); });
   $("#ordersBody").querySelectorAll(".ocard").forEach(c => c.onclick = () => editOrder(c.dataset.id));
   const sb = $("#shopUpcoming"); if (sb) sb.onclick = () => pickShopOrders(upcoming);
-  $("#openCustomers").onclick = openCustomers; $("#openReport").onclick = openReport;
+  $("#openCustomers").onclick = openCustomers; $("#openReport").onclick = openReport; $("#openBake").onclick = openBakePlan;
   updateOrderBadge(); paintEye();
 }
 // Choose which upcoming orders to shop for; the next 7 days are ticked to start
@@ -820,22 +849,50 @@ function pickShopOrders(upcoming){
     paint();
   });
 }
-function shopForOrders(list){
+function shopForOrders(list){ shopForItems(list.flatMap(o => o.items), `${list.length} order${list.length>1?"s":""}`); }
+// Replace the Shopping list with these cakes (sizes scale the ingredients); can be undone
+function shopForItems(items, what){
   const prev = {qty:{...qty}, checked:{...checked}, some:{...some}};
   qty = {}; checked = {}; some = {};
-  for (const o of list) for (const it of o.items) if (db.recipes[it.recipe] && !db.recipes[it.recipe].sub) qty[it.recipe] = (qty[it.recipe]||0) + num(it.qty);
+  for (const it of items) if (db.recipes[it.recipe] && !db.recipes[it.recipe].sub) qty[it.recipe] = r2((qty[it.recipe]||0) + num(it.qty) * num(it.k || 1));
   saveState(); go("list");
-  toast(`Shopping list made from ${list.length} order${list.length>1?"s":""}`, "Undo", () => { qty = prev.qty; checked = prev.checked; some = prev.some; saveState(); refreshAll(); });
+  toast(`Shopping list made from ${what}`, "Undo", () => { qty = prev.qty; checked = prev.checked; some = prev.some; saveState(); refreshAll(); });
+}
+// ---------- BAKE PLAN: works back from due dates using each recipe's "bake N days before" ----------
+const leadDays = r => r && r.lead != null ? num(r.lead) : (r && r.cat === "Other" ? 0 : 1);
+const dayKey = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+function openBakePlan(){
+  const today = parseDay(todayStr()), byDay = {}, noDate = [];
+  for (const o of ORDERS().filter(o => !o.done)) {
+    if (!parseDay(o.due)) { noDate.push(o); continue; }
+    for (const it of o.items) { const d = parseDay(o.due); d.setDate(d.getDate() - leadDays(db.recipes[it.recipe])); (byDay[dayKey(d)] = byDay[dayKey(d)] || []).push({o, it}); }
+  }
+  const keys = Object.keys(byDay).sort().filter(k => (parseDay(k) - today) / 864e5 <= 30);
+  const label = k => { const n = Math.round((parseDay(k) - today) / 864e5);
+    return n < 0 ? `<span class="warnc">Late · ${esc(fmtDay(k))}</span>` : n === 0 ? `Today · ${esc(fmtDay(k))}` : n === 1 ? `Tomorrow · ${esc(fmtDay(k))}` : esc(fmtDay(k)); };
+  const name = it => `${it.qty} × ${esc((db.recipes[it.recipe]?.name || it.name || "Cake"))}${sizeTag(it) ? ` ${esc(sizeTag(it))}` : ""}`;
+  openSheet("Bake plan", `<p class="small" style="margin:0 0 12px">When to bake each cake, worked back from its due date. Change “bake how many days before” in a recipe’s details.</p>
+    ${keys.length ? keys.map(k => `<div class="group bakeday ${Math.round((parseDay(k) - today) / 864e5) < 0 ? "late" : ""}"><h4>${label(k)}</h4>
+      <div class="pickl">${byDay[k].map(({o, it}) => `<button class="pickrow bprow" data-o="${esc(o.id)}"><span class="picktxt"><b>${name(it)}</b>
+        <small>for ${esc(o.customer || "No name")} · due ${esc(fmtDay(o.due))}${o.method ? ` · ${o.method === "delivery" ? "delivery" : "pickup"}` : ""}${isFree(o) ? ` · ${KIND_LABEL[o.kind]}` : ""}${(it.addons||[]).length ? ` · + ${esc(it.addons.map(a => a.name).join(", "))}` : ""}</small></span></button>`).join("")}</div>
+      <button class="ghostbtn bpshop" data-k="${k}" style="width:100%">Shopping list for this day</button></div>`).join("")
+      : `<div class="empty">Nothing to bake in the next 30 days.</div>`}
+    ${noDate.length ? `<p class="small">${noDate.length} upcoming order${noDate.length===1?" has":"s have"} no due date, so ${noDate.length===1?"it isn’t":"they aren’t"} planned.</p>` : ""}`, (b, close) => {
+    b.querySelectorAll(".bprow").forEach(r => r.onclick = () => editOrder(r.dataset.o));
+    b.querySelectorAll(".bpshop").forEach(x => x.onclick = () => { close(); shopForItems(byDay[x.dataset.k].map(e => e.it), fmtDay(x.dataset.k) + "’s baking"); });
+  }, {tall:true});
 }
 function editOrder(oid, preset){
   const isNew = !oid, src = isNew ? null : ORDERS().find(o => o.id === oid);
   if (!isNew && !src) return;
   const o = clone(src || {id:newId("o"), customer:"", due:"", items:[], paid:false, done:false, notes:""});
   if (isNew && preset) { o.customer = preset.customer || ""; if (preset.method) o.method = preset.method; if (preset.kind) o.kind = preset.kind;
-    for (const it of preset.items || []) { const n = addItem(it.recipe); n.qty = it.qty; o.items.push(n); } }
+    for (const it of preset.items || []) { if (!db.recipes[it.recipe]) continue; const n = addItem(it.recipe, it.size, it.addons); n.qty = it.qty; if (num(it.price) > 0) n.price = num(it.price); o.items.push(n); }
+    if (o.method === "delivery") o.fee = preset.fee != null ? preset.fee : num(BIZ().deliveryFee); if (preset.notes) o.notes = preset.notes; if (preset.due) o.due = preset.due; }
   const custNote = () => { const id = findCustomer(o.customer), c = id && CUSTOMERS()[id]; return c && c.notes ? `<div class="cnotecard"><b>Notes for ${esc(c.name)}</b>${esc(c.notes)}</div>` : ""; };
   const cakeOpts = sel => cakeIds().map(id => `<option value="${esc(id)}" ${id===sel?"selected":""}>${esc(db.recipes[id].name)}</option>`).join("");
   const body = () => `
+    ${isNew && !preset ? `<button class="ghostbtn pastebtn" id="o_paste" style="width:100%;margin-bottom:12px"><svg viewBox="0 0 24 24"><rect x="8" y="3" width="8" height="4" rx="1"/><path d="M8 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/></svg>Paste an order from WhatsApp</button>` : ""}
     <label class="field"><span>Customer</span><input id="o_cust" value="${esc(o.customer)}" placeholder="e.g. Maria" list="o_custlist" autocomplete="off"></label>
     <datalist id="o_custlist">${Object.values(CUSTOMERS()).map(c => `<option value="${esc(c.name)}"></option>`).join("")}</datalist>
     <div id="o_cnote">${custNote()}</div>
@@ -843,6 +900,7 @@ function editOrder(oid, preset){
     <div class="field"><span>How they get it</span><div class="seg2">
       <button type="button" class="chip ${o.method==="pickup"?"on":""}" data-m="pickup">Pickup</button>
       <button type="button" class="chip ${o.method==="delivery"?"on":""}" data-m="delivery">Delivery</button></div></div>
+    ${o.method === "delivery" && !isFree(o) ? `<label class="field"><span>Delivery fee</span><div class="inl depinl"><em>$</em>${hideMoney ? `<input class="num masked" id="o_fee" value="•••" disabled data-v="${r2(num(o.fee))}">` : `<input class="num" id="o_fee" inputmode="decimal" value="${num(o.fee) ? r2(num(o.fee)) : ""}" placeholder="0">`}</div></label>` : ""}
     <div class="field"><span>Type of order</span><div class="seg2 kindseg">
       <button type="button" class="chip ${!isFree(o)?"on":""}" data-k="">Sale</button>
       <button type="button" class="chip ${o.kind==="gift"?"on":""}" data-k="gift">Gift</button>
@@ -852,6 +910,8 @@ function editOrder(oid, preset){
       ${o.items.length ? "" : `<p class="small" style="margin:0 0 10px">No cakes yet.</p>`}
       ${o.items.map((it, i) => `<div class="oitem" data-i="${i}">
         <select class="o_rec">${cakeOpts(it.recipe)}</select>
+        ${sizeOptions(db.recipes[it.recipe]).length ? `<div class="chips minichips">${sizeOptions(db.recipes[it.recipe]).map(op => `<button type="button" class="chip ${(it.size || baseSize(db.recipes[it.recipe])) === op.label ? "on" : ""}" data-sz="${esc(op.label)}">${esc(op.label)}</button>`).join("")}</div>` : ""}
+        ${ADDONS().length ? `<div class="chips minichips addchips">${ADDONS().map(a => `<button type="button" class="chip ${(it.addons||[]).some(x => x.id === a.id) ? "on" : ""}" data-ad="${esc(a.id)}">+ ${esc(a.name)}${isFree(o) ? "" : ` <small>${mm(num(a.price))}</small>`}</button>`).join("")}</div>` : ""}
         <div class="orow"><div class="stepper sm"><button class="minus" aria-label="One less"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button><output>${it.qty}</output><button class="plus" aria-label="One more"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button></div>
           ${isFree(o) ? `<span class="inl freeinl">Free</span>` : `<span class="inl"><em>$</em>${hideMoney ? `<input class="num o_price masked" value="•••" disabled data-v="${r2(num(it.price))}">` : `<input class="num o_price" inputmode="decimal" value="${r2(num(it.price))}">`}<em>each</em></span>`}
           <button class="icon odel" aria-label="Remove"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
@@ -863,6 +923,7 @@ function editOrder(oid, preset){
       <div class="prow2 big"><span>Cost to make</span><b>${mm(orderCost(o))}</b></div>
       <div class="prow2"><span>Counted in profit</span><b>No</b></div>
     </div>` : `<div class="card pricing">
+      ${o.method === "delivery" && num(o.fee) ? `<div class="prow2"><span>Includes delivery</span><b>${mm(num(o.fee))}</b></div>` : ""}
       <div class="prow2"><span>Total charged</span><b class="hot">${mm(orderTotal(o))}</b></div>
       <div class="prow2"><span>Your cost</span><b>${mm(orderCost(o))}</b></div>
       <div class="prow2 big"><span>Profit</span><b>${mm(orderTotal(o) - orderCost(o))}</b></div>
@@ -883,22 +944,35 @@ function editOrder(oid, preset){
     o.customer = b.querySelector("#o_cust").value.trim(); o.due = b.querySelector("#o_due").value; o.notes = b.querySelector("#o_notes").value.trim();
     b.querySelectorAll(".oitem").forEach(row => { const it = o.items[+row.dataset.i], pi = row.querySelector(".o_price"); if (pi) it.price = num(pi.dataset.v ?? pi.value); });
     const dp = b.querySelector("#o_dep"); if (dp) { const v = num(dp.dataset.v ?? dp.value); if (v > 0) o.deposit = v; else delete o.deposit; }
+    const fe = b.querySelector("#o_fee"); if (fe) o.fee = num(fe.dataset.v ?? fe.value);
   }
-  function addItem(rid){ const r = db.recipes[rid]; const p = pricing(r); return {recipe: rid, name: r.name, qty: 1, price: Math.round(p.price), cost: r2(p.totalCost)}; }
+  // A cake line: its size (scales ingredients and price) and any add-ons are priced in
+  function addItem(rid, size, addonIds){
+    const r = db.recipes[rid], opts = sizeOptions(r), op = opts.find(x => x.label === size) || opts.find(x => x.base) || {k: 1, label: ""};
+    const p = pricing(r, op.k), ads = (addonIds || []).map(x => typeof x === "object" ? x : ADDONS().find(a => a.id === x || a.name === x)).filter(Boolean).map(a => ({id: a.id, name: a.name, price: num(a.price), cost: num(a.cost)}));
+    const it = {recipe: rid, name: r.name, qty: 1, price: Math.ceil(p.price - 0.005) + ads.reduce((t, a) => t + a.price, 0), cost: r2(p.totalCost + ads.reduce((t, a) => t + a.cost, 0))};
+    if (op.label) { it.size = op.label; it.k = op.k; } if (ads.length) it.addons = ads;
+    return it;
+  }
   function mount(b, close, el){
-    const re = () => { grab(b); replaceSheetBody(el, body(), nb => mount(nb, close, el)); };
+    const redraw = () => replaceSheetBody(el, body(), nb => mount(nb, close, el)), re = () => { grab(b); redraw(); };
     // Hide / Show in the order's own header, so prices can be revealed without leaving the order
     eyeInSheet(el, () => { grab(b); re(); });
+    const pb = b.querySelector("#o_paste"); if (pb) pb.onclick = () => { close(); setTimeout(pasteOrder, 250); };
     b.querySelector("#o_add").onclick = () => { grab(b); const first = cakeIds()[0]; if (!first) return; o.items.push(addItem(first)); re(); };
     b.querySelectorAll(".oitem").forEach(row => { const i = +row.dataset.i, it = o.items[i];
-      row.querySelector(".o_rec").onchange = e => { grab(b); const n = addItem(e.target.value); n.qty = it.qty; o.items[i] = n; re(); };
+      // a new cake, size or add-on gets a freshly worked-out price (redraw without re-reading the old price box)
+      row.querySelector(".o_rec").onchange = e => { grab(b); const n = addItem(e.target.value, null, it.addons); n.qty = it.qty; o.items[i] = n; redraw(); };
+      row.querySelectorAll("[data-sz]").forEach(c => c.onclick = () => { grab(b); const n = addItem(it.recipe, c.dataset.sz, it.addons); n.qty = it.qty; o.items[i] = n; redraw(); });
+      row.querySelectorAll("[data-ad]").forEach(c => c.onclick = () => { grab(b); const ids = (it.addons || []).map(a => a.id), id = c.dataset.ad;
+        const n = addItem(it.recipe, it.size, ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id]); n.qty = it.qty; o.items[i] = n; redraw(); });
       row.querySelector(".plus").onclick = () => { grab(b); it.qty++; re(); };
       row.querySelector(".minus").onclick = () => { grab(b); if (it.qty > 1) it.qty--; re(); };
       const pin = row.querySelector(".o_price"); if (pin) pin.onchange = () => re();
       row.querySelector(".odel").onclick = () => { grab(b); o.items.splice(i, 1); re(); };
     });
-    b.querySelectorAll("[data-m]").forEach(c => c.onclick = () => { o.method = o.method === c.dataset.m ? "" : c.dataset.m;
-      b.querySelectorAll("[data-m]").forEach(x => x.classList.toggle("on", x.dataset.m === o.method)); });
+    b.querySelectorAll("[data-m]").forEach(c => c.onclick = () => { grab(b); o.method = o.method === c.dataset.m ? "" : c.dataset.m;
+      if (o.method === "delivery" && o.fee == null) o.fee = num(BIZ().deliveryFee); re(); });
     b.querySelectorAll("[data-k]").forEach(c => c.onclick = () => { grab(b); if (c.dataset.k) o.kind = c.dataset.k; else delete o.kind; re(); });
     const pd = b.querySelector("#o_paid"); if (pd) pd.onclick = () => { grab(b); o.paid = !o.paid; re(); };
     const dpi = b.querySelector("#o_dep"); if (dpi) dpi.onchange = () => re();
@@ -1200,10 +1274,10 @@ const fmtLong = (s, L) => { const d = parseDay(s); return d ? d.toLocaleDateStri
 // Words on customer receipts and the price menu, in English and Spanish
 const RT = {
   en: {conf:"Order confirmation", cust:"Customer", delivery:"Delivery", pickup:"Pickup", ready:"Ready on", tbc:"To be confirmed", ordered:"Ordered",
-       each: x => `${x} each`, total:"Total", paid:"Paid in full ✓", deposit:"Deposit received", due: x => `Balance due ${x}`, notes:"Notes", thanks:"Thank you for your order!",
+       each: x => `${x} each`, total:"Total", paid:"Paid in full ✓", deposit:"Deposit received", fee:"Delivery fee", due: x => `Balance due ${x}`, notes:"Notes", thanks:"Thank you for your order!",
        menu:"Menu", whole:"Whole", per: w => w ? w.charAt(0).toUpperCase() + w.slice(1) : "Slice"},
   es: {conf:"Confirmación de orden", cust:"Cliente", delivery:"Entrega", pickup:"Para recoger", ready:"Lista el", tbc:"Por confirmar", ordered:"Fecha de orden",
-       each: x => `${x} c/u`, total:"Total", paid:"Pagado en su totalidad ✓", deposit:"Depósito recibido", due: x => `Balance pendiente ${x}`, notes:"Notas", thanks:"¡Gracias por su orden!",
+       each: x => `${x} c/u`, total:"Total", paid:"Pagado en su totalidad ✓", deposit:"Depósito recibido", fee:"Cargo de entrega", due: x => `Balance pendiente ${x}`, notes:"Notas", thanks:"¡Gracias por su orden!",
        menu:"Menú", whole:"Entero", per: w => ({slice:"Porción", brownie:"Brownie"})[String(w||"slice").toLowerCase()] || (w || "Porción")}
 };
 const rlang = () => BIZ().lang === "es" ? "es" : "en";
@@ -1280,15 +1354,17 @@ async function drawReceipt(o){
     y += 18; rule(y); y += 66;
     // items
     for (const it of o.items) {
-      const nm = cakeName(db.recipes[it.recipe], it.name, Lg);
+      const nm = cakeName(db.recipes[it.recipe], it.name, Lg) + (sizeTag(it) ? ` (${sizeTag(it)})` : "");
       ctx.font = `700 34px ${F}`;
       const lines = wrap(ctx, `${it.qty} × ${nm}`, cw - 230);
       lines.forEach((ln, i) => txt(ln, L, y + i*44, `700 34px ${F}`, C.ink));
       txt(money(num(it.price) * num(it.qty)), R, y, `800 34px ${F}`, C.ink, "right");
       y += (lines.length - 1) * 44;
+      if ((it.addons || []).length) { ctx.font = `600 27px ${F}`; for (const ln of wrap(ctx, "+ " + it.addons.map(a => a.name).join(", "), cw - 230)) { y += 38; txt(ln, L, y, `600 27px ${F}`, C.muted); } }
       if (num(it.qty) > 1) { y += 40; txt(T.each(money(num(it.price))), L, y, `600 27px ${F}`, C.muted); }
       y += 62;
     }
+    if (o.method === "delivery" && num(o.fee) > 0) { txt(T.fee, L, y, `700 32px ${F}`, C.ink); txt(money(num(o.fee)), R, y, `800 32px ${F}`, C.ink, "right"); y += 62; }
     rule(y - 14); y += 56;
     txt(T.total, L, y, `800 40px ${F}`, C.ink); txt(money(total), R, y, `800 52px ${F}`, C.berry, "right");
     y += 56;
@@ -1493,6 +1569,107 @@ async function shareImages(list, title, saveOnly){
     else { saveAll(); toast("Images saved. Attach them in your messaging app."); }
   } catch(e) { if (e && e.name !== "AbortError") { saveAll(); toast("Images saved. Attach them in your messaging app."); } }
 }
+// ---------- PRICING EXTRAS: hourly rate, delivery fee, add-ons ----------
+function openPricingSettings(){
+  const biz = BIZ(); let list = clone(ADDONS());
+  const rows = () => list.length ? list.map((a, i) => `<div class="addrow" data-i="${i}"><input class="ad_name" value="${esc(a.name)}" placeholder="e.g. Writing on the cake" aria-label="Add-on name">
+      <div class="inl"><em>$</em><input class="num ad_price" inputmode="decimal" value="${num(a.price) ? r2(num(a.price)) : ""}" placeholder="0" aria-label="Price"></div>
+      <button class="icon odel" aria-label="Remove add-on"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>`).join("")
+    : `<p class="small" style="margin:0 0 8px">No add-ons yet.</p>`;
+  openSheet("Pricing extras", `
+    <div class="group"><h4>Your time</h4>
+      <label class="field"><span>Your hourly rate</span><div class="inl depinl"><em>$</em><input class="num" id="pr_rate" inputmode="decimal" value="${num(biz.rate) ? r2(num(biz.rate)) : ""}" placeholder="0"><em>/h</em></div></label>
+      <p class="small" style="margin:0">Then add the hands-on hours on each recipe page (mixing, baking, decorating; not chilling). Suggested price = cost × markup + your time. Leave it at 0 to price like before.</p></div>
+    <div class="group"><h4>Delivery</h4>
+      <label class="field"><span>Usual delivery fee</span><div class="inl depinl"><em>$</em><input class="num" id="pr_fee" inputmode="decimal" value="${num(biz.deliveryFee) ? r2(num(biz.deliveryFee)) : ""}" placeholder="0"></div></label>
+      <p class="small" style="margin:0">Filled in when you choose Delivery on an order; you can change it per order.</p></div>
+    <div class="group"><h4>Add-ons</h4><p class="small" style="margin:0 0 10px">Extras you charge for, picked per cake on an order (and on the order form).</p>
+      <div id="pr_list">${rows()}</div>
+      <button class="addline" id="pr_add"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add an add-on</button></div>
+    <button class="primary" id="pr_save">Save</button>`, (b, close) => {
+    const grab = () => { b.querySelectorAll(".addrow").forEach(r => { const a = list[+r.dataset.i]; a.name = r.querySelector(".ad_name").value.trim(); a.price = num(r.querySelector(".ad_price").value); }); };
+    const paint = () => { b.querySelector("#pr_list").innerHTML = rows();
+      b.querySelectorAll(".addrow .odel").forEach(x => x.onclick = () => { grab(); const i = +x.closest(".addrow").dataset.i, gone = list.splice(i, 1)[0]; paint();
+        toast(`Removed “${gone.name || "add-on"}”`, "Undo", () => { grab(); list.splice(i, 0, gone); paint(); }); }); };
+    paint();
+    b.querySelector("#pr_add").onclick = () => { grab(); list.push({id: newId("a"), name: "", price: 0}); paint(); const ins = b.querySelectorAll(".ad_name"); ins[ins.length - 1].focus(); };
+    b.querySelector("#pr_save").onclick = () => { grab();
+      biz.rate = num(b.querySelector("#pr_rate").value); biz.deliveryFee = num(b.querySelector("#pr_fee").value);
+      db.addons = list.filter(a => a.name); saveDb(); close(); refreshAll(); toast("Saved"); };
+  }, {tall:true});
+}
+// ---------- ORDER FORM FOR CUSTOMERS: a link that carries your cakes and prices; orders come back on WhatsApp ----------
+const FORM_HOME = "https://berto0481.github.io/cakecart/order.html";
+const b64e = s => btoa(unescape(encodeURIComponent(s))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const b64d = s => decodeURIComponent(escape(atob(String(s).replace(/-/g, "+").replace(/_/g, "/"))));
+const FORM = () => { const f = store.get("form", {}); if (f.days == null) f.days = 3; if (f.delivery == null) f.delivery = true; return f; };
+function formLink(){
+  const m = MENU(), f = FORM(), biz = BIZ();
+  const cakes = menuIds().filter(id => !m.off[id]).map(id => {
+    const r = db.recipes[id], whole = menuPrice(id, m); if (!(whole > 0)) return null;
+    const base = pricing(r).price, ops = sizeOptions(r);
+    // your own menu price is scaled for other sizes; otherwise each size uses its suggested price, rounded up like the menu
+    const custom = num(m.price[id]) > 0, sizePrice = op => op.base ? whole : custom ? Math.ceil(base > 0 ? whole * pricing(r, op.k).price / base : whole * op.k) : Math.ceil(pricing(r, op.k).price - 0.005);
+    const sz = ops.length ? ops.map(op => [op.label, sizePrice(op), op.base ? 1 : 0]) : whole;
+    return [id, r.name, r.nameEs || "", sz];
+  }).filter(Boolean);
+  const data = {v: 1, b: biz.name || "CakeCart", w: telDigits(biz.whatsapp || ""), l: rlang(), d: num(f.days), f: f.delivery ? num(biz.deliveryFee) : -1,
+    a: ADDONS().map(a => [a.id, a.name, num(a.price)]), c: cakes};
+  const home = !IS_APP && location.protocol.startsWith("http") ? new URL("order.html", location.href).href : FORM_HOME;
+  return {url: `${home}#d=${b64e(JSON.stringify(data))}`, n: cakes.length};
+}
+function openOrderForm(){
+  const f = FORM(), biz = BIZ();
+  const body = () => { const {url, n} = formLink();
+    return `<p class="small" style="margin:0 0 12px">Share this link on Instagram, WhatsApp or anywhere. Customers pick cakes, sizes, add-ons and a date, and it sends the order to your WhatsApp. Paste that message into <b>New order</b> and CakeCart fills it in.</p>
+    <label class="field"><span>Your WhatsApp number</span><input id="of_wa" type="tel" inputmode="tel" value="${esc(biz.whatsapp || "")}" placeholder="787-555-0123"></label>
+    <div class="two"><label class="field"><span>Days of notice needed</span><input id="of_days" inputmode="numeric" value="${num(f.days)}"></label>
+    <div class="field"><span>Form language</span>${langChips(rlang())}</div></div>
+    <label class="toggle"><span>Offer delivery<small>${num(biz.deliveryFee) ? `Fee ${money(num(biz.deliveryFee))}` : "No fee set"} · change it in Pricing extras</small></span><button class="switch ${f.delivery?"on":""}" id="of_del" role="switch"></button></label>
+    <div class="card note2">${n} cake${n===1?"":"s"} with the prices from your <b>Price menu</b>${ADDONS().length ? ` and ${ADDONS().length} add-on${ADDONS().length===1?"":"s"}` : ""}. Sizes are priced from your recipes.</div>
+    ${telDigits(biz.whatsapp || "") ? `<button class="primary" id="of_share"><svg viewBox="0 0 24 24"><path d="M12 15V3M7 8l5-5 5 5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>Share the link</button>
+    <div class="btnrow"><button class="ghostbtn" id="of_copy">Copy link</button><button class="ghostbtn" id="of_open">Try it yourself</button></div>
+    <p class="small">Change a price, cake or setting? Share the link again; old links keep the old prices.</p>` : `<p class="warn">Add your WhatsApp number above to make the link.</p>`}`; };
+  openSheet("Order form", body(), (b, close, el) => mount(b, close, el), {tall:true});
+  function mount(b, close, el){
+    const re = () => replaceSheetBody(el, body(), nb => mount(nb, close, el));
+    b.querySelector("#of_wa").onchange = e => { biz.whatsapp = e.target.value.trim(); saveDb(); re(); };
+    b.querySelector("#of_days").onchange = e => { f.days = Math.max(0, Math.round(num(e.target.value))); store.set("form", f); re(); };
+    b.querySelector("#of_del").onclick = () => { f.delivery = !f.delivery; store.set("form", f); re(); };
+    hookLang(b, re);
+    const link = () => formLink().url;
+    const sh = b.querySelector("#of_share"); if (sh) sh.onclick = async () => {
+      const text = rlang() === "es" ? `Ordena tus bizcochos de ${biz.name || "CakeCart"} aquí:` : `Order from ${biz.name || "CakeCart"} here:`;
+      try { if (IS_APP) await Native.shareText(text, link()); else if (navigator.share) await navigator.share({title: biz.name || "Order", text, url: link()}); else { await navigator.clipboard.writeText(link()); toast("Link copied"); } }
+      catch(e) { if (!/cancel|abort/i.test((e && (e.name + e.message)) || "")) toast("Couldn’t share. Use Copy link instead."); } };
+    const cp = b.querySelector("#of_copy"); if (cp) cp.onclick = async () => { try { await navigator.clipboard.writeText(link()); toast("Link copied"); } catch(e) { toast("Couldn’t copy on this phone"); } };
+    const op = b.querySelector("#of_open"); if (op) op.onclick = () => { if (IS_APP) Native.openUrl(link()); else window.open(link(), "_blank"); };
+  }
+}
+// Paste the WhatsApp message a customer sent from the order form; fills in a new order
+function parseOrderCode(text){
+  const m = String(text || "").match(/CC1\.([A-Za-z0-9_-]+)/); if (!m) return null;
+  try { return JSON.parse(b64d(m[1])); } catch(e) { return null; }
+}
+function pasteOrder(){
+  openSheet("Paste an order", `<p class="small" style="margin:0 0 10px">Copy the whole WhatsApp message from the order form and paste it here.</p>
+    <label class="field"><span>Message</span><textarea id="po_txt" rows="7" placeholder="Hi! I’d like to order… Order code for CakeCart: CC1…"></textarea></label>
+    ${navigator.clipboard && navigator.clipboard.readText ? `<button class="ghostbtn" id="po_clip" style="width:100%;margin-bottom:10px">Paste from clipboard</button>` : ""}
+    <button class="primary" id="po_go">Fill in the order</button>`, (b, close) => {
+    const pc = b.querySelector("#po_clip"); if (pc) pc.onclick = async () => { try { b.querySelector("#po_txt").value = await navigator.clipboard.readText(); } catch(e) { toast("Long-press the box and choose Paste"); } };
+    b.querySelector("#po_go").onclick = () => {
+      const d = parseOrderCode(b.querySelector("#po_txt").value);
+      if (!d) { toast("No CakeCart order code found in that message"); return; }
+      const items = (d.i || []).map(([rid, q, size, ads, price]) => ({recipe: rid, qty: num(q) || 1, size: size || null, addons: ads || [], price: num(price)})).filter(it => db.recipes[it.recipe]);
+      const missing = (d.i || []).length - items.length;
+      if (d.n) { const cid = findOrMakeCustomer(d.n), c = CUSTOMERS()[cid]; if (d.p && !c.phone) c.phone = d.p; saveDb(); }
+      const notes = [d.m === "delivery" && d.ad ? `Deliver to: ${d.ad}` : "", d.t || "", d.p ? `Phone: ${d.p}` : ""].filter(Boolean).join(" · ");
+      close();
+      editOrder(null, {customer: d.n || "", due: d.due || d.d || "", method: d.m || "", fee: d.m === "delivery" ? num(d.f) : undefined, notes, items});
+      if (missing) setTimeout(() => toast(`${missing} cake${missing===1?"":"s"} from the form aren’t in your recipes anymore`), 400);
+    };
+  });
+}
 function editBusiness(done){
   const biz = BIZ();
   openSheet("Your business", `
@@ -1503,6 +1680,7 @@ function editBusiness(done){
         <button class="ghostbtn danger" id="bz_rmlogo">Remove</button></div></div></div>
     <label class="field"><span>Business name</span><input id="bz_name" value="${esc(biz.name)}" placeholder="CakeCart"></label>
     <label class="field"><span>Contact <small>(phone, Instagram… optional)</small></span><input id="bz_contact" value="${esc(biz.contact)}" placeholder="e.g. 787-555-0123 · @mycheesecakes"></label>
+    <label class="field"><span>WhatsApp number for orders <small>(for the order form)</small></span><input id="bz_wa" type="tel" inputmode="tel" value="${esc(biz.whatsapp || "")}" placeholder="787-555-0123"></label>
     <label class="field"><span>Thank-you line</span><input id="bz_thanks" value="${esc(biz.thanks)}" placeholder="Thank you for your order!"></label>
     <label class="field"><span>Thank-you line in Spanish</span><input id="bz_thankses" value="${esc(biz.thanksEs||"")}" placeholder="¡Gracias por su orden!"></label>
     <button class="primary" id="bz_save">Save</button>`, (b, close) => {
@@ -1520,7 +1698,7 @@ function editBusiness(done){
     b.querySelector("#bz_rmlogo").onclick = () => { logo = ""; paint(); };
     b.querySelector("#bz_save").onclick = () => {
       if (logo) biz.logo = logo; else delete biz.logo;
-      biz.name = b.querySelector("#bz_name").value.trim(); biz.contact = b.querySelector("#bz_contact").value.trim(); biz.thanks = b.querySelector("#bz_thanks").value.trim(); biz.thanksEs = b.querySelector("#bz_thankses").value.trim();
+      biz.name = b.querySelector("#bz_name").value.trim(); biz.contact = b.querySelector("#bz_contact").value.trim(); biz.whatsapp = b.querySelector("#bz_wa").value.trim(); biz.thanks = b.querySelector("#bz_thanks").value.trim(); biz.thanksEs = b.querySelector("#bz_thankses").value.trim();
       saveDb(); close(); toast("Saved"); if (done) done();
     };
   });
@@ -1536,7 +1714,9 @@ function openSettings(){
   const nR = Object.values(db.recipes).length, nI = Object.values(db.ingredients).filter(i=>!i.madeFrom).length;
   openSheet("Settings & backup", `
     <div class="card note2"><b>Your data lives on this phone.</b> ${nR} recipes and ${nI} ingredients. Make a backup now and then, and before switching phones.<br><span class="small" style="margin:0">${last ? `Last backup: ${new Date(last).toLocaleDateString()}` : "No backup made yet."}</span></div>
-    <button class="ghostbtn" id="b_biz" style="width:100%;margin-bottom:14px">Your business name &amp; logo for receipts${BIZ().name?`: ${esc(BIZ().name)}`:""}</button>
+    <button class="ghostbtn" id="b_biz" style="width:100%;margin-bottom:10px">Your business name &amp; logo for receipts${BIZ().name?`: ${esc(BIZ().name)}`:""}</button>
+    <button class="ghostbtn" id="b_pricing" style="width:100%;margin-bottom:10px">Your hourly rate, delivery fee &amp; add-ons</button>
+    <button class="ghostbtn" id="b_form" style="width:100%;margin-bottom:14px">Order form for customers (WhatsApp)</button>
     <button class="primary" id="b_save"><svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Save a backup file</button>
     <p class="small">Keep the file somewhere safe, like Google Drive or your email. To move your data to another phone, open CakeCart there and use Restore.</p>
     ${IS_APP ? `<div class="group"><h4>App updates</h4><div id="upd"><p class="small" style="margin:0">Checking…</p></div></div>` : ""}
@@ -1552,6 +1732,8 @@ function openSettings(){
       <p class="small" style="margin:0 0 10px">Puts back the original recipes and prices from the spreadsheet. Your orders and business details are kept; other changes are lost unless you made a backup.</p>
       <button class="ghostbtn danger" id="b_reset">Reset to original data</button></div>`, (b, close) => {
     b.querySelector("#b_biz").onclick = () => { close(); setTimeout(() => editBusiness(), 250); };
+    b.querySelector("#b_pricing").onclick = () => { close(); setTimeout(() => openPricingSettings(), 250); };
+    b.querySelector("#b_form").onclick = () => { close(); setTimeout(() => openOrderForm(), 250); };
     if (IS_APP) {
       const rs = remindSettings(), keep = () => { store.set("reminders", rs); syncReminders(); };
       b.querySelector("#rm_on").onclick = async e => { rs.on = !rs.on; e.currentTarget.classList.toggle("on", rs.on); if (rs.on && !(await Native.allowed(true))) toast("Allow notifications for CakeCart in your phone settings"); keep(); };
